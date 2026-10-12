@@ -12,7 +12,7 @@ use crate::net::{self, Listener};
 use crate::process::{self, Tracked};
 use crate::templates::conf_path;
 use crate::toolchain::PhpHandler;
-use crate::{Layout, Module, Settings, Toolchain, setup, templates};
+use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates};
 
 /// Something that stops a module from starting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,20 +332,20 @@ impl Stack {
             .join("\n")
     }
 
-    /// Where the panel's Admin button goes, if anywhere.
-    pub fn admin_url(&self, module: Module) -> Option<String> {
+    /// The site, where the Apache row's Admin button goes.
+    pub fn site_url(&self) -> String {
         let http = self.settings.ports.http;
-        let host = if http == 80 {
-            "http://localhost".to_string()
+        if http == 80 {
+            "http://localhost/".to_string()
         } else {
-            format!("http://localhost:{http}")
-        };
-        match module {
-            Module::Apache => Some(format!("{host}/")),
-            Module::MySql => {
-                crate::phpmyadmin::installed(&self.layout).then(|| format!("{host}/phpmyadmin/"))
-            }
+            format!("http://localhost:{http}/")
         }
+    }
+
+    /// An admin tool's page, once it is installed.
+    pub fn db_admin_url(&self, tool: DbAdmin) -> Option<String> {
+        tool.installed(&self.layout)
+            .then(|| format!("{}{}/", self.site_url(), tool.id()))
     }
 
     pub fn config_files(&self, module: Module) -> Vec<NamedFile> {
@@ -360,6 +360,7 @@ impl Stack {
             Module::MySql => vec![named("MySQL (my.cnf)", l.my_cnf())],
         };
         files.push(named("phpMyAdmin (config.inc.php)", l.phpmyadmin_config()));
+        files.push(named("Adminer (index.php)", l.adminer_index()));
         files
     }
 

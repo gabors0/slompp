@@ -1,6 +1,6 @@
 //! Where everything lives inside a stack root. Mirrors XAMPP's own layout so
 //! people find their way around: `htdocs/`, `apache/conf/httpd.conf`,
-//! `php/php.ini`, `mysql/data/`, `phpMyAdmin/`.
+//! `php/php.ini`, `mysql/data/`, `phpMyAdmin/`, and `adminer/` beside it.
 
 use std::path::{Path, PathBuf};
 
@@ -185,6 +185,22 @@ impl Layout {
 
     pub fn phpmyadmin_config(&self) -> PathBuf {
         self.phpmyadmin().join("config.inc.php")
+    }
+
+    // Adminer
+
+    pub fn adminer(&self) -> PathBuf {
+        self.root.join("adminer")
+    }
+
+    /// Adminer itself, replaced by each download.
+    pub fn adminer_php(&self) -> PathBuf {
+        self.adminer().join("adminer.php")
+    }
+
+    /// The page Apache serves, which logs in and includes `adminer.php`.
+    pub fn adminer_index(&self) -> PathBuf {
+        self.adminer().join("index.php")
     }
 }
 

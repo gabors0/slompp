@@ -21,6 +21,7 @@ if (function_exists('mysqli_connect')) {
     $dbError = 'The mysqli extension is not loaded.';
 }
 $pma = is_dir(__DIR__ . '/../phpMyAdmin');
+$adminer = is_file(__DIR__ . '/../adminer/index.php');
 $h = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES);
 ?>
 <!doctype html>
@@ -76,6 +77,7 @@ $h = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES);
 
   <nav>
     <?php if ($pma): ?><a href="/phpmyadmin/">Open phpMyAdmin</a><?php endif; ?>
+    <?php if ($adminer): ?><a href="/adminer/">Open Adminer</a><?php endif; ?>
     <a href="?phpinfo=1">Show phpinfo()</a>
   </nav>
 

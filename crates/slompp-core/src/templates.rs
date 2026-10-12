@@ -142,7 +142,7 @@ LogLevel warn
 
 EnableSendfile on
 
-# PHP and phpMyAdmin
+# PHP, phpMyAdmin and Adminer
 Include "conf/extra/httpd-slompp.conf"
 
 <IfDefine SSL>
@@ -158,7 +158,7 @@ pub fn httpd_slompp_conf(layout: &Layout) -> String {
     let php = conf_path(&layout.php());
     let pma = conf_path(&layout.phpmyadmin());
     format!(
-        r#"# PHP and phpMyAdmin for SLOMPP. Yours to edit.
+        r#"# PHP, phpMyAdmin and Adminer for SLOMPP. Yours to edit.
 
 <IfDefine PHP_MODULE>
     PHPIniDir "{php}"
@@ -183,6 +183,23 @@ Alias /phpmyadmin "{pma}/"
     AllowOverride AuthConfig
     # phpMyAdmin logs in as root without a password, like XAMPP's: keep it
     # to this computer.
+    Require local
+</Directory>
+
+{adminer}"#,
+        adminer = adminer_alias(layout),
+    )
+}
+
+/// Serves `adminer/` at `/adminer`; also appended to older stacks' config
+/// when Adminer is installed.
+pub fn adminer_alias(layout: &Layout) -> String {
+    let dir = conf_path(&layout.adminer());
+    format!(
+        r#"Alias /adminer "{dir}/"
+<Directory "{dir}">
+    AllowOverride AuthConfig
+    # Adminer logs in as root without a password too.
     Require local
 </Directory>
 "#
@@ -358,6 +375,55 @@ $cfg['Servers'][$i]['port'] = '{port}';
 $cfg['TempDir'] = '{tmp}';
 $cfg['UploadDir'] = '';
 $cfg['SaveDir'] = '';
+"#
+    )
+}
+
+/// Adminer's `index.php`: logs in as root over the socket without asking,
+/// then hands over to `adminer.php`. Adminer won't log in without a password
+/// unless told to, hence `login()`.
+pub fn adminer_index(layout: &Layout) -> String {
+    let socket = conf_path(&layout.mysql_socket());
+    format!(
+        r#"<?php
+/* Adminer for SLOMPP. Yours to edit: "Get Adminer" replaces adminer.php,
+ * never this file. It logs in as root without a password, like phpMyAdmin
+ * in this stack, so logging out just logs in again. */
+
+function adminer_object()
+{{
+    class SlomppAdminer extends Adminer\Adminer
+    {{
+        function credentials()
+        {{
+            return array(':{socket}', 'root', '');
+        }}
+
+        function login($login, $password)
+        {{
+            return true;
+        }}
+
+        // The automatic login below is a form post without Adminer's token.
+        function verifyLoginToken()
+        {{
+            return false;
+        }}
+    }}
+    return new SlomppAdminer();
+}}
+
+if (!isset($_GET['username']) && !$_POST) {{
+    $_POST['auth'] = array(
+        'driver' => 'server',
+        'server' => '',
+        'username' => 'root',
+        'password' => '',
+        'db' => '',
+    );
+}}
+
+include __DIR__ . '/adminer.php';
 "#
     )
 }

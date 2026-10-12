@@ -3,8 +3,8 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
-use slompp_core::phpmyadmin::{self, Progress};
-use slompp_core::{Module, Settings, Stack, net};
+use slompp_core::dbadmin::Progress;
+use slompp_core::{DbAdmin, Module, Settings, Stack, net};
 
 const USAGE: &str = "\
 Usage: slomppctl <command> [apache|mysql]
@@ -17,6 +17,7 @@ Commands:
   ports                List programs listening on TCP ports
   paths                Show where the stack and its programs are
   install-phpmyadmin   Download phpMyAdmin into the stack
+  install-adminer      Download Adminer into the stack
 
 The stack lives in $SLOMPP_ROOT, or the root set in the panel's settings.";
 
@@ -62,7 +63,8 @@ fn main() -> ExitCode {
             paths(&stack);
             true
         }
-        "install-phpmyadmin" => install_phpmyadmin(&stack),
+        "install-phpmyadmin" => install_db_admin(&stack, DbAdmin::PhpMyAdmin),
+        "install-adminer" => install_db_admin(&stack, DbAdmin::Adminer),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");
             true
@@ -199,17 +201,18 @@ fn paths(stack: &Stack) {
     );
 }
 
-fn install_phpmyadmin(stack: &Stack) -> bool {
+fn install_db_admin(stack: &Stack, tool: DbAdmin) -> bool {
+    let name = tool.name();
     let mut last = String::new();
-    let result = phpmyadmin::install(stack.layout(), stack.settings().ports.mysql, |p| {
+    let result = tool.install(stack.layout(), stack.settings().ports.mysql, |p| {
         let line = match p {
-            Progress::Checking => "Looking up the latest phpMyAdmin...".to_string(),
+            Progress::Checking => format!("Looking up the latest {name}..."),
             Progress::Downloading {
                 version,
                 fraction: Some(f),
-            } => format!("Downloading phpMyAdmin {version}... {:.0}%", f * 100.0),
-            Progress::Downloading { version, .. } => format!("Downloading phpMyAdmin {version}..."),
-            Progress::Unpacking { version } => format!("Unpacking phpMyAdmin {version}..."),
+            } => format!("Downloading {name} {version}... {:.0}%", f * 100.0),
+            Progress::Downloading { version, .. } => format!("Downloading {name} {version}..."),
+            Progress::Unpacking { version } => format!("Unpacking {name} {version}..."),
         };
         if line != last {
             println!("{line}");
@@ -217,12 +220,15 @@ fn install_phpmyadmin(stack: &Stack) -> bool {
         }
     });
     match result {
-        Ok(version) => {
-            println!("phpMyAdmin {version} is installed.");
+        Ok(installed) => {
+            println!("{name} {} is installed.", installed.version);
+            if installed.apache_conf_changed && stack.status(Module::Apache).running() {
+                println!("Restart Apache to serve it: slomppctl restart apache");
+            }
             true
         }
         Err(err) => {
-            eprintln!("Installing phpMyAdmin failed: {err:#}");
+            eprintln!("Installing {name} failed: {err:#}");
             false
         }
     }

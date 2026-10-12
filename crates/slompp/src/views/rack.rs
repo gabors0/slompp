@@ -10,9 +10,9 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     Animation, AnimationExt as _, AnyElement, Context, FontWeight, Hsla, SharedString, div, px,
 };
-use slompp_core::{Module, Problem, phpmyadmin};
+use slompp_core::{DbAdmin, Module, Problem};
 
-use crate::controller::{Controller, PmaState, Row};
+use crate::controller::{Controller, Row};
 use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Lamp, Palette};
 
@@ -276,29 +276,15 @@ fn render_actions(
     };
 
     let admin: AnyElement = match m {
-        Module::MySql if !phpmyadmin::installed(stack.layout()) => {
-            let installing = matches!(ctl.pma, PmaState::Installing(_));
-            Button::new("install-pma")
-                .small()
-                .ghost()
-                .label("Get phpMyAdmin")
-                .tooltip("Download phpMyAdmin from phpmyadmin.net")
-                .loading(installing)
-                .disabled(installing)
-                .on_click(on_controller(cx, |c, cx| c.install_phpmyadmin(cx)))
-                .into_any_element()
-        }
-        _ => Button::new(SharedString::from(format!("admin-{id}")))
+        Module::Apache => Button::new(SharedString::from(format!("admin-{id}")))
             .small()
             .ghost()
             .label("Admin")
-            .tooltip(match m {
-                Module::Apache => "Open the site in your browser",
-                Module::MySql => "Open phpMyAdmin",
-            })
-            .disabled(!ctl.row(Module::Apache).running() || (m == Module::MySql && !running))
-            .on_click(on_controller(cx, move |c, cx| c.open_admin(m, cx)))
+            .tooltip("Open the site in your browser")
+            .disabled(!running)
+            .on_click(on_controller(cx, |c, cx| c.open_site(cx)))
             .into_any_element(),
+        Module::MySql => db_admin_menu(ctl, running).into_any_element(),
     };
 
     let files_menu = |kind: &'static str, files: Vec<slompp_core::stack::NamedFile>| {
@@ -331,7 +317,51 @@ fn render_actions(
         .child(toggle)
 }
 
-/// Lines under a unit: why it can't start, and phpMyAdmin's progress.
+/// MySQL's Admin menu: open phpMyAdmin or Adminer, or download them.
+fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
+    let layout = ctl.stack().layout();
+    let installed: Vec<(DbAdmin, bool)> = DbAdmin::ALL
+        .into_iter()
+        .map(|tool| (tool, tool.installed(layout)))
+        .collect();
+    let can_open = mysql_running && ctl.row(Module::Apache).running();
+    let installing = ctl.installing.is_some();
+    Button::new("admin-mysql")
+        .small()
+        .ghost()
+        .label("Admin")
+        .dropdown_caret(true)
+        .dropdown_menu_with_anchor(gpui_kit::Anchor::TopRight, move |mut menu, _, _| {
+            let open = |&(tool, installed): &(DbAdmin, bool)| installed.then_some(tool);
+            let get = |&(tool, installed): &(DbAdmin, bool)| (!installed).then_some(tool);
+            let opens: Vec<DbAdmin> = installed.iter().filter_map(open).collect();
+            let gets: Vec<DbAdmin> = installed.iter().filter_map(get).collect();
+            for &tool in &opens {
+                menu = menu.item(
+                    PopupMenuItem::new(format!("Open {}", tool.name()))
+                        .disabled(!can_open)
+                        .on_click(move |_, _, cx| {
+                            Controller::global(cx).update(cx, |c, cx| c.open_db_admin(tool, cx));
+                        }),
+                );
+            }
+            if !opens.is_empty() && !gets.is_empty() {
+                menu = menu.separator();
+            }
+            for &tool in &gets {
+                menu = menu.item(
+                    PopupMenuItem::new(format!("Get {} from {}", tool.name(), tool.site()))
+                        .disabled(installing)
+                        .on_click(move |_, _, cx| {
+                            Controller::global(cx).update(cx, |c, cx| c.install_db_admin(tool, cx));
+                        }),
+                );
+            }
+            menu
+        })
+}
+
+/// Lines under a unit: why it can't start, and a download's progress.
 fn notes(ctl: &Controller, row: &Row) -> Vec<(String, Hsla)> {
     let mut notes: Vec<(String, Hsla)> = row
         .problems
@@ -339,10 +369,10 @@ fn notes(ctl: &Controller, row: &Row) -> Vec<(String, Hsla)> {
         .map(|p| (p.to_string(), Palette::fault().into()))
         .collect();
     if row.module == Module::MySql
-        && let PmaState::Installing(text) = &ctl.pma
+        && let Some((tool, text)) = &ctl.installing
     {
         notes.push((
-            format!("phpMyAdmin: {text}"),
+            format!("{}: {text}", tool.name()),
             Palette::text_secondary().into(),
         ));
     }

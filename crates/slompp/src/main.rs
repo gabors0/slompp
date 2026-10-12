@@ -14,7 +14,6 @@ mod views;
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::*;
-use slompp_core::Module;
 
 use crate::controller::Controller;
 use crate::tray::TrayCommand;
@@ -96,10 +95,8 @@ fn handle(command: TrayCommand, cx: &mut App) {
         TrayCommand::Toggle(m) => controller.update(cx, |c, cx| c.toggle(m, cx)),
         TrayCommand::StartAll => controller.update(cx, |c, cx| c.start_all(cx)),
         TrayCommand::StopAll => controller.update(cx, |c, cx| c.stop_all(cx)),
-        TrayCommand::OpenSite => controller.update(cx, |c, cx| c.open_admin(Module::Apache, cx)),
-        TrayCommand::OpenPhpMyAdmin => {
-            controller.update(cx, |c, cx| c.open_admin(Module::MySql, cx))
-        }
+        TrayCommand::OpenSite => controller.update(cx, |c, cx| c.open_site(cx)),
+        TrayCommand::OpenDbAdmin(tool) => controller.update(cx, |c, cx| c.open_db_admin(tool, cx)),
         TrayCommand::ShowPanel => show_panel(cx),
         TrayCommand::Quit => cx.quit(),
     }

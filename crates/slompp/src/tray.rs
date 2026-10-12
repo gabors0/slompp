@@ -12,7 +12,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{TrayHandle, spawn};
 
-use slompp_core::Module;
+use slompp_core::{DbAdmin, Module};
 
 use crate::theme::Lamp;
 
@@ -23,7 +23,7 @@ pub enum TrayCommand {
     StartAll,
     StopAll,
     OpenSite,
-    OpenPhpMyAdmin,
+    OpenDbAdmin(DbAdmin),
     ShowPanel,
     Quit,
 }
@@ -43,9 +43,8 @@ pub struct TrayModule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrayState {
     pub modules: Vec<TrayModule>,
-    pub site_url: Option<String>,
-    /// `None` until phpMyAdmin is installed.
-    pub phpmyadmin_url: Option<String>,
+    /// The database admin tools that are installed.
+    pub db_admins: Vec<DbAdmin>,
     /// Whether the icon sits on a light panel, so it's drawn in black.
     pub light_panel: bool,
 }
@@ -118,16 +117,12 @@ impl TrayState {
         menu.push(item("Stop all", !busy && any, TrayCommand::StopAll));
         menu.push(MenuEntry::Separator);
         let apache = self.running(Module::Apache);
-        menu.push(item(
-            "Open site",
-            apache && self.site_url.is_some(),
-            TrayCommand::OpenSite,
-        ));
-        if self.phpmyadmin_url.is_some() {
+        menu.push(item("Open site", apache, TrayCommand::OpenSite));
+        for &tool in &self.db_admins {
             menu.push(item(
-                "Open phpMyAdmin",
+                &format!("Open {}", tool.name()),
                 apache && self.running(Module::MySql),
-                TrayCommand::OpenPhpMyAdmin,
+                TrayCommand::OpenDbAdmin(tool),
             ));
         }
         menu.push(MenuEntry::Separator);
@@ -533,8 +528,7 @@ mod tests {
                 module(Module::Apache, true, "Running", &[8080, 8443]),
                 module(Module::MySql, false, "Stopped", &[]),
             ],
-            site_url: None,
-            phpmyadmin_url: None,
+            db_admins: Vec::new(),
             light_panel: false,
         };
         assert_eq!(
@@ -564,8 +558,7 @@ mod tests {
                 module(Module::Apache, true, "Running", &[8080]),
                 module(Module::MySql, false, "Stopped", &[]),
             ],
-            site_url: Some("http://localhost:8080/".into()),
-            phpmyadmin_url: None,
+            db_admins: vec![DbAdmin::Adminer],
             light_panel: false,
         };
         assert_eq!(
@@ -578,6 +571,11 @@ mod tests {
                 entry("Stop all", true, TrayCommand::StopAll),
                 MenuEntry::Separator,
                 entry("Open site", true, TrayCommand::OpenSite),
+                entry(
+                    "Open Adminer",
+                    false,
+                    TrayCommand::OpenDbAdmin(DbAdmin::Adminer)
+                ),
                 MenuEntry::Separator,
                 entry("Show panel", true, TrayCommand::ShowPanel),
                 entry("Quit SLOMPP", true, TrayCommand::Quit),

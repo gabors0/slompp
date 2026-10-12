@@ -1,11 +1,11 @@
 //! phpMyAdmin, which XAMPP bundles. SLOMPP downloads the current release from
 //! phpmyadmin.net on request and configures it for the stack's MariaDB.
 
-use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 
+use crate::dbadmin::{Installed, Progress, download};
 use crate::{Layout, templates};
 
 const VERSION_URL: &str = "https://www.phpmyadmin.net/home_page/version.txt";
@@ -14,27 +14,13 @@ pub fn installed(layout: &Layout) -> bool {
     layout.phpmyadmin().join("index.php").is_file()
 }
 
-/// What the installer is doing, for a progress display.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Progress {
-    Checking,
-    /// `fraction` is `None` when the server didn't say how big the file is.
-    Downloading {
-        version: String,
-        fraction: Option<f32>,
-    },
-    Unpacking {
-        version: String,
-    },
-}
-
 /// Downloads and unpacks the latest phpMyAdmin into `phpMyAdmin/` and writes
-/// its config. Blocking; run it off the UI thread. Returns the version.
+/// its config. Blocking; run it off the UI thread.
 pub fn install(
     layout: &Layout,
     mysql_port: u16,
     mut progress: impl FnMut(Progress),
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Installed> {
     progress(Progress::Checking);
     let (version, url) = latest_release()?;
 
@@ -74,7 +60,10 @@ pub fn install(
     std::fs::write(layout.phpmyadmin_config(), config)?;
     std::fs::create_dir_all(layout.tmp().join("phpmyadmin"))?;
     let _ = std::fs::remove_dir_all(&staging);
-    Ok(version)
+    Ok(Installed {
+        version,
+        apache_conf_changed: false,
+    })
 }
 
 /// `(version, zip url)` of the newest release.
@@ -96,42 +85,6 @@ fn parse_version_txt(text: &str) -> Option<(String, String)> {
         "https://files.phpmyadmin.net/phpMyAdmin/{version}/phpMyAdmin-{version}-all-languages.zip"
     );
     Some((version, url))
-}
-
-fn download(url: &str, to: &Path, mut progress: impl FnMut(Option<f32>)) -> anyhow::Result<()> {
-    let mut response = ureq::get(url)
-        .call()
-        .with_context(|| format!("downloading {url}"))?;
-    let total = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok());
-    let mut reader = response
-        .body_mut()
-        .with_config()
-        .limit(200 * 1024 * 1024)
-        .reader();
-    let mut file =
-        std::fs::File::create(to).with_context(|| format!("writing {}", to.display()))?;
-    let mut buf = vec![0u8; 64 * 1024];
-    let mut done = 0u64;
-    let mut last_reported = 0u64;
-    progress(total.map(|_| 0.0));
-    loop {
-        let n = reader.read(&mut buf).context("downloading phpMyAdmin")?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])?;
-        done += n as u64;
-        if done - last_reported >= 256 * 1024 {
-            last_reported = done;
-            progress(total.map(|t| (done as f32 / t as f32).min(1.0)));
-        }
-    }
-    progress(total.map(|_| 1.0));
-    Ok(())
 }
 
 /// Unpacks a zip whose entries share one top directory (`phpMyAdmin-x.y.z/`)
@@ -182,6 +135,8 @@ fn secret() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
+
     use super::*;
 
     #[test]

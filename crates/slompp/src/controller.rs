@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task};
+use slompp_core::dbadmin::{Installed, Progress};
 use slompp_core::net::Listener;
-use slompp_core::phpmyadmin::{self, Progress};
-use slompp_core::{Module, ModuleStatus, Problem, Settings, Stack, desktop};
+use slompp_core::{DbAdmin, Module, ModuleStatus, Problem, Settings, Stack, desktop};
 
 use crate::log::{Kind, Log};
 use crate::panel;
@@ -72,13 +72,6 @@ impl Row {
     }
 }
 
-/// phpMyAdmin's installer, shown in the MySQL row.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PmaState {
-    Idle,
-    Installing(String),
-}
-
 /// Something to tell the user in the window, if one is open.
 pub enum ControllerEvent {
     Notify { text: String, error: bool },
@@ -90,7 +83,9 @@ pub struct Controller {
     pub rows: Vec<Row>,
     pub log: Log,
     pub listeners: Vec<Listener>,
-    pub pma: PmaState,
+    /// A database admin tool being downloaded, and its progress for the
+    /// MySQL row. One at a time.
+    pub installing: Option<(DbAdmin, String)>,
     /// Whether a window shows the Ports page (polls then list listeners).
     pub watch_ports: bool,
     tray: Option<TrayHandle>,
@@ -170,7 +165,7 @@ impl Controller {
             rows,
             log,
             listeners: Vec::new(),
-            pma: PmaState::Idle,
+            installing: None,
             watch_ports: false,
             tray: None,
             tray_state: None,
@@ -248,8 +243,10 @@ impl Controller {
             .collect();
         TrayState {
             modules,
-            site_url: self.stack.admin_url(Module::Apache),
-            phpmyadmin_url: self.stack.admin_url(Module::MySql),
+            db_admins: DbAdmin::ALL
+                .into_iter()
+                .filter(|&tool| self.stack.db_admin_url(tool).is_some())
+                .collect(),
             light_panel: tray::light_panel(panel::wants_light(cx.window_appearance())),
         }
     }
@@ -579,10 +576,19 @@ impl Controller {
         self.report(result, cx);
     }
 
-    pub fn open_admin(&mut self, module: Module, cx: &mut Context<Self>) {
-        let Some(url) = self.stack.admin_url(module) else {
-            return;
-        };
+    pub fn open_site(&mut self, cx: &mut Context<Self>) {
+        let url = self.stack.site_url();
+        self.open_served(Module::Apache, url, cx);
+    }
+
+    pub fn open_db_admin(&mut self, tool: DbAdmin, cx: &mut Context<Self>) {
+        if let Some(url) = self.stack.db_admin_url(tool) {
+            self.open_served(Module::MySql, url, cx);
+        }
+    }
+
+    /// Opens a page Apache serves, or says to start Apache.
+    fn open_served(&mut self, module: Module, url: String, cx: &mut Context<Self>) {
         if !self.row(Module::Apache).running() {
             self.log.push(
                 Some(module),
@@ -625,18 +631,23 @@ impl Controller {
         cx.notify();
     }
 
-    pub fn install_phpmyadmin(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.pma, PmaState::Installing(_)) {
+    pub fn install_db_admin(&mut self, tool: DbAdmin, cx: &mut Context<Self>) {
+        if self.installing.is_some() {
             return;
         }
-        self.pma = PmaState::Installing("Looking up the latest version…".into());
-        self.log
-            .push(Some(Module::MySql), Kind::Info, "Installing phpMyAdmin…");
+        let name = tool.name();
+        self.installing = Some((tool, "Looking up the latest version…".into()));
+        self.log.push(
+            Some(Module::MySql),
+            Kind::Info,
+            format!("Installing {name}…"),
+        );
         let layout = self.stack.layout().clone();
         let port = self.stack.settings().ports.mysql;
-        let (tx, rx) = async_channel::unbounded::<Result<Progress, Result<String, String>>>();
+        type Done = Result<Installed, String>;
+        let (tx, rx) = async_channel::unbounded::<Result<Progress, Done>>();
         std::thread::spawn(move || {
-            let result = phpmyadmin::install(&layout, port, |p| {
+            let result = tool.install(&layout, port, |p| {
                 let _ = tx.send_blocking(Ok(p));
             });
             let _ = tx.send_blocking(Err(result.map_err(|e| format!("{e:#}"))));
@@ -646,19 +657,28 @@ impl Controller {
                 let done = message.is_err();
                 let ok = this.update(cx, |this, cx| {
                     match message {
-                        Ok(progress) => this.pma = PmaState::Installing(progress_text(&progress)),
+                        Ok(progress) => this.installing = Some((tool, progress_text(&progress))),
                         Err(result) => {
-                            this.pma = PmaState::Idle;
+                            this.installing = None;
                             match result {
-                                Ok(version) => {
-                                    let text = format!("phpMyAdmin {version} is installed");
+                                Ok(installed) => {
+                                    let text = format!("{name} {} is installed", installed.version);
                                     this.log.push(Some(Module::MySql), Kind::Ok, text.clone());
+                                    if installed.apache_conf_changed
+                                        && this.row(Module::Apache).running()
+                                    {
+                                        this.log.push(
+                                            Some(Module::Apache),
+                                            Kind::Info,
+                                            format!("Restart Apache to serve {name}"),
+                                        );
+                                    }
                                     cx.emit(ControllerEvent::Notify { text, error: false });
                                 }
                                 Err(err) => this.log.push(
                                     Some(Module::MySql),
                                     Kind::Error,
-                                    format!("Installing phpMyAdmin failed: {err}"),
+                                    format!("Installing {name} failed: {err}"),
                                 ),
                             }
                         }
