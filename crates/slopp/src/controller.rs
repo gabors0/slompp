@@ -35,6 +35,10 @@ pub struct Row {
     pub status: Option<ModuleStatus>,
     pub problems: Vec<Problem>,
     pub phase: Phase,
+    /// When the last start or stop finished. A poll begun before then saw
+    /// the module as it was (no pid file yet, or still running), so it is
+    /// stale for this row.
+    settled: Instant,
 }
 
 impl Row {
@@ -96,7 +100,12 @@ pub struct Controller {
 
 /// One poll: each module's status and problems, and the listening ports
 /// when the Ports page is open.
-type Snapshot = (Vec<(ModuleStatus, Vec<Problem>)>, Option<Vec<Listener>>);
+/// When the poll began, what it found per module, and the listeners if asked.
+type Snapshot = (
+    Instant,
+    Vec<(ModuleStatus, Vec<Problem>)>,
+    Option<Vec<Listener>>,
+);
 
 /// How long a launched module gets to open its ports.
 const START_TIMEOUT: Duration = Duration::from_secs(45);
@@ -156,6 +165,7 @@ impl Controller {
                 status: None,
                 problems: Vec::new(),
                 phase: Phase::Idle,
+                settled: Instant::now(),
             })
             .collect();
 
@@ -320,6 +330,7 @@ impl Controller {
                 first = false;
                 let snapshot = cx
                     .background_spawn(async move {
+                        let taken = Instant::now();
                         let modules: Vec<_> = Module::ALL
                             .into_iter()
                             .map(|m| {
@@ -333,7 +344,7 @@ impl Controller {
                             })
                             .collect();
                         let listeners = want_ports.then(slopp_core::net::listeners);
-                        (modules, listeners)
+                        (taken, modules, listeners)
                     })
                     .await;
                 if this
@@ -346,9 +357,14 @@ impl Controller {
         })
     }
 
-    fn apply_snapshot(&mut self, (modules, listeners): Snapshot, cx: &mut Context<Self>) {
+    fn apply_snapshot(&mut self, (taken, modules, listeners): Snapshot, cx: &mut Context<Self>) {
         for (status, problems) in modules {
             let m = status.module;
+            // Begun before a start or stop finished: it would read a module
+            // that was just launched as gone, or one just stopped as running.
+            if taken < self.row(m).settled {
+                continue;
+            }
             let was_running = self.row(m).status.as_ref().map(ModuleStatus::running);
             let phase = self.row(m).phase;
             match phase {
@@ -457,6 +473,7 @@ impl Controller {
                 .background_spawn(async move { stack.start(module) })
                 .await;
             this.update(cx, |this, cx| {
+                this.row_mut(module).settled = Instant::now();
                 match result {
                     Ok(pids) => {
                         this.row_mut(module).phase = Phase::Starting {
@@ -499,7 +516,9 @@ impl Controller {
             let result = cx.background_spawn(async move { stack.stop(module) }).await;
             this.update(cx, |this, cx| {
                 // The next poll shouldn't read this as an unexpected exit.
-                if let Some(status) = &mut this.row_mut(module).status {
+                let row = this.row_mut(module);
+                row.settled = Instant::now();
+                if let Some(status) = &mut row.status {
                     status.pids.clear();
                 }
                 match result {
