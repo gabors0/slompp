@@ -160,8 +160,8 @@ pub fn init_mysql(layout: &Layout, mariadb: &MariaDb) -> anyhow::Result<()> {
     let out = cmd
         .output()
         .with_context(|| format!("running {}", install_db.display()))?;
-    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
-    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    let mut log = crate::process::decode(&out.stdout);
+    log.push_str(&crate::process::decode(&out.stderr));
     let _ = std::fs::write(layout.mysql_install_log(), &log);
     if !out.status.success() || !mysql_initialised(layout) {
         let tail: Vec<&str> = log.lines().rev().take(6).collect();

@@ -474,8 +474,8 @@ fn is_executable(path: &Path) -> bool {
 /// Runs a program briefly and returns stdout and stderr together.
 fn run_capture(bin: &Path, args: &[&str]) -> Option<String> {
     let out = crate::process::command(bin).args(args).output().ok()?;
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let mut text = crate::process::decode(&out.stdout);
+    text.push_str(&crate::process::decode(&out.stderr));
     Some(text)
 }
 
