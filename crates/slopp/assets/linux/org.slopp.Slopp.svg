@@ -1,7 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="lamp" x1="470" y1="0" x2="185" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#149A50"/>
+      <stop offset="1" stop-color="#149A50" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
   <rect x="8" y="8" width="112" height="112" rx="24" fill="#181C25"/>
-  <rect x="26" y="30" width="76" height="18" rx="5" fill="#9BA3B3"/>
-  <rect x="80" y="35" width="16" height="8" rx="2.5" fill="#F07B2C"/>
-  <rect x="26" y="55" width="76" height="18" rx="5" fill="#9BA3B3"/>
-  <rect x="26" y="80" width="76" height="18" rx="5" fill="#9BA3B3"/>
+  <!-- The tray's mark with both lamps lit, from its 512 grid. -->
+  <g transform="translate(64 64) scale(0.18) translate(-256 -258)">
+    <rect x="42" y="98" width="112" height="160" fill="#B9B9B9"/>
+    <rect x="358" y="258" width="112" height="160" fill="#B9B9B9"/>
+    <rect x="42" y="42" width="428" height="112" rx="20" fill="#FFFFFF"/>
+    <rect x="42" y="202" width="428" height="112" rx="20" fill="#FFFFFF"/>
+    <rect x="42" y="362" width="428" height="112" rx="20" fill="#FFFFFF"/>
+    <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#lamp)"/>
+    <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#lamp)"/>
+  </g>
 </svg>

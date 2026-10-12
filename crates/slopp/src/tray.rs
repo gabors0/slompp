@@ -308,17 +308,30 @@ pub fn spawn(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-/// The tray icon, drawn in code: three rack units like the panel's mark.
-/// The top lamp is Apache's, the middle one MySQL's.
+/// The tray icon, drawn in code: SLOPP's mark, three rack units joined into
+/// an S by a link on the left (top to middle) and one on the right (middle
+/// to bottom). The top unit's lamp is Apache's, the middle one's MySQL's.
 ///
 /// The units are solid white on dark panels and black on light ones, like
-/// the panel's other icons. A lamp is a slot cut out of its unit, empty when
-/// stopped and filled with the lamp's colour otherwise, in shades that stand
-/// out against the unit around them.
+/// the panel's other icons, with grey links. A lit lamp is a gradient of its
+/// colour over the unit's right side, fading out towards the middle.
 pub mod icon {
     use crate::theme::Lamp;
 
     type Rgb = [u8; 3];
+
+    /// The design grid: the artwork is drawn on a 512×512 canvas.
+    const GRID: f32 = 512.0;
+    /// The units' left and right edges.
+    const LEFT: f32 = 42.0;
+    const RIGHT: f32 = 470.0;
+    /// Each unit's top edge; units are 112 high, 48 apart.
+    const UNITS: [f32; 3] = [42.0, 202.0, 362.0];
+    const UNIT_HEIGHT: f32 = 112.0;
+    const LINK_WIDTH: f32 = 112.0;
+    const RADIUS: f32 = 20.0;
+    /// Where a lamp's gradient is fully transparent.
+    const LAMP_CLEAR: f32 = 185.0;
 
     /// What the icon is drawn in.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,6 +340,11 @@ pub mod icon {
         White,
         /// For light panels.
         Black,
+        /// A macOS template image, which AppKit tints to suit the menu bar:
+        /// only alpha counts, so the links are half-transparent and there
+        /// are no lamps.
+        #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+        Template,
     }
 
     impl Ink {
@@ -334,25 +352,46 @@ pub mod icon {
             if light { Ink::Black } else { Ink::White }
         }
 
-        fn color(self) -> Rgb {
+        fn unit(self) -> Rgb {
             match self {
                 Ink::White => [0xFF, 0xFF, 0xFF],
-                Ink::Black => [0x00, 0x00, 0x00],
+                Ink::Black | Ink::Template => [0x00, 0x00, 0x00],
             }
         }
 
-        /// A lit lamp's colour: deeper on white units, brighter on black.
+        /// The links' colour and alpha.
+        fn link(self) -> (Rgb, f32) {
+            match self {
+                Ink::White => ([0xB9, 0xB9, 0xB9], 1.0),
+                Ink::Black => ([0x73, 0x73, 0x73], 1.0),
+                // As dark as the black ink's links on white.
+                Ink::Template => ([0x00, 0x00, 0x00], 0.55),
+            }
+        }
+
+        /// A lit lamp's colour.
         fn lamp(self, lamp: Lamp) -> Option<Rgb> {
             let (on_white, on_black) = match lamp {
                 Lamp::Off => return None,
-                Lamp::Busy => ([0xC7, 0x84, 0x00], [0xE9, 0xB4, 0x4C]),
-                Lamp::On => ([0x14, 0x9A, 0x50], [0x4C, 0xC3, 0x8A]),
-                Lamp::Fault => ([0xD9, 0x33, 0x27], [0xEF, 0x64, 0x58]),
+                Lamp::Busy => ([0xF4, 0xA0, 0x00], [0xB0, 0x7A, 0x12]),
+                Lamp::On => ([0x14, 0x9A, 0x50], [0x1F, 0x8F, 0x58]),
+                Lamp::Fault => ([0xD9, 0x33, 0x27], [0xC5, 0x37, 0x2B]),
             };
-            Some(match self {
-                Ink::White => on_white,
-                Ink::Black => on_black,
-            })
+            match self {
+                Ink::White => Some(on_white),
+                Ink::Black => Some(on_black),
+                Ink::Template => None,
+            }
+        }
+
+        /// Where a lamp's gradient becomes solid: at the unit's right edge
+        /// on white units; on black ones 60% of the way across, so the
+        /// colour holds up against the black.
+        fn lamp_solid(self) -> f32 {
+            match self {
+                Ink::White | Ink::Template => RIGHT,
+                Ink::Black => RIGHT - 0.6 * (RIGHT - LAMP_CLEAR),
+            }
         }
     }
 
@@ -363,15 +402,29 @@ pub mod icon {
         pub data: Vec<u8>,
     }
 
-    /// A rounded rectangle in the 32×32 design grid. Alpha 0 cuts a hole.
+    /// How a shape is filled.
+    enum Fill {
+        Solid {
+            color: Rgb,
+            alpha: f32,
+        },
+        /// A horizontal gradient, transparent at `clear` and opaque from
+        /// `solid` on.
+        Fade {
+            color: Rgb,
+            clear: f32,
+            solid: f32,
+        },
+    }
+
+    /// A rounded rectangle in the design grid.
     struct Shape {
         x0: f32,
         y0: f32,
         x1: f32,
         y1: f32,
         radius: f32,
-        color: Rgb,
-        alpha: f32,
+        fill: Fill,
     }
 
     impl Shape {
@@ -385,35 +438,62 @@ pub mod icon {
             let (dx, dy) = (x - cx, y - cy);
             dx * dx + dy * dy <= self.radius * self.radius
         }
+
+        fn paint(&self, x: f32) -> (Rgb, f32) {
+            match self.fill {
+                Fill::Solid { color, alpha } => (color, alpha),
+                Fill::Fade {
+                    color,
+                    clear,
+                    solid,
+                } => (color, ((x - clear) / (solid - clear)).clamp(0.0, 1.0)),
+            }
+        }
     }
 
     fn shapes(apache: Lamp, mysql: Lamp, ink: Ink) -> Vec<Shape> {
-        let mut shapes = Vec::new();
-        let rows = [(3.5, Some(apache)), (12.5, Some(mysql)), (21.5, None)];
-        for (y, lamp) in rows {
-            shapes.push(Shape {
-                x0: 3.0,
+        let (link, link_alpha) = ink.link();
+        let link = |x0: f32, top: usize| Shape {
+            x0,
+            // From the middle of one unit to the middle of the next: only
+            // the part between them shows.
+            y0: UNITS[top] + UNIT_HEIGHT / 2.0,
+            x1: x0 + LINK_WIDTH,
+            y1: UNITS[top + 1] + UNIT_HEIGHT / 2.0,
+            radius: 0.0,
+            fill: Fill::Solid {
+                color: link,
+                alpha: link_alpha,
+            },
+        };
+        // Behind the units.
+        let mut shapes = vec![link(LEFT, 0), link(RIGHT - LINK_WIDTH, 1)];
+        for (y, lamp) in UNITS.into_iter().zip([Some(apache), Some(mysql), None]) {
+            let unit = |x0, fill| Shape {
+                x0,
                 y0: y,
-                x1: 29.0,
-                y1: y + 7.0,
-                radius: 2.0,
-                color: ink.color(),
-                alpha: 1.0,
-            });
-            let Some(lamp) = lamp else { continue };
-            let (color, alpha) = match ink.lamp(lamp) {
-                Some(color) => (color, 1.0),
-                None => (ink.color(), 0.0),
+                x1: RIGHT,
+                y1: y + UNIT_HEIGHT,
+                radius: RADIUS,
+                fill,
             };
-            shapes.push(Shape {
-                x0: 16.5,
-                y0: y + 1.75,
-                x1: 26.5,
-                y1: y + 5.25,
-                radius: 1.2,
-                color,
-                alpha,
-            });
+            shapes.push(unit(
+                LEFT,
+                Fill::Solid {
+                    color: ink.unit(),
+                    alpha: 1.0,
+                },
+            ));
+            if let Some(color) = lamp.and_then(|lamp| ink.lamp(lamp)) {
+                shapes.push(unit(
+                    LAMP_CLEAR,
+                    Fill::Fade {
+                        color,
+                        clear: LAMP_CLEAR,
+                        solid: ink.lamp_solid(),
+                    },
+                ));
+            }
         }
         shapes
     }
@@ -422,7 +502,7 @@ pub mod icon {
     pub fn render(size: i32, apache: Lamp, mysql: Lamp, ink: Ink) -> Pixmap {
         const SS: i32 = 4;
         let shapes = shapes(apache, mysql, ink);
-        let scale = 32.0 / size as f32;
+        let scale = GRID / size as f32;
         let mut data = Vec::with_capacity((size * size * 4) as usize);
         for py in 0..size {
             for px in 0..size {
@@ -432,13 +512,19 @@ pub mod icon {
                     for sx in 0..SS {
                         let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
                         let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
-                        // The topmost shape wins.
-                        if let Some(shape) = shapes.iter().rev().find(|s| s.contains(x, y)) {
-                            r += f32::from(shape.color[0]) * shape.alpha;
-                            g += f32::from(shape.color[1]) * shape.alpha;
-                            b += f32::from(shape.color[2]) * shape.alpha;
-                            a += shape.alpha;
+                        // Each shape over the ones before it, premultiplied.
+                        let mut sample = [0.0f32; 4];
+                        for shape in shapes.iter().filter(|s| s.contains(x, y)) {
+                            let (color, alpha) = shape.paint(x);
+                            for c in 0..3 {
+                                sample[c] = f32::from(color[c]) * alpha + sample[c] * (1.0 - alpha);
+                            }
+                            sample[3] = alpha + sample[3] * (1.0 - alpha);
                         }
+                        r += sample[0];
+                        g += sample[1];
+                        b += sample[2];
+                        a += sample[3];
                     }
                 }
                 let unpremultiply = |c: f32| if a > 0.0 { (c / a).round() as u8 } else { 0 };
@@ -466,25 +552,57 @@ pub mod icon {
             icon.data[i..i + 4].try_into().unwrap()
         }
 
+        // At 32 pixels a pixel is 16 grid units: the units are rows 3–9,
+        // 13–19 and 23–29, the left link shows in rows 10–12 at columns
+        // 3–9, the right one in rows 20–22 at columns 22–28.
+
         #[test]
-        fn lamps_show_each_modules_state() {
+        fn lamps_fade_in_towards_the_right() {
             let icon = render(32, Lamp::On, Lamp::Fault, Ink::White);
             assert_eq!(icon.data.len(), 32 * 32 * 4);
-            // The middle of each lamp, and the corner (transparent).
-            assert_eq!(pixel(&icon, 21, 7), [255, 0x14, 0x9A, 0x50]);
-            assert_eq!(pixel(&icon, 21, 16), [255, 0xD9, 0x33, 0x27]);
+            // Solid white on the left of each unit, the lamp's colour
+            // over most of it at the right.
+            assert_eq!(pixel(&icon, 6, 6), [255, 0xFF, 0xFF, 0xFF]);
+            let [a, r, g, b] = pixel(&icon, 28, 6);
+            assert_eq!(a, 255);
+            assert!(
+                r < 0x30 && (0x98..0xA4).contains(&g) && b < 0x60,
+                "{r} {g} {b}"
+            );
+            let [_, r, g, b] = pixel(&icon, 28, 16);
+            assert!(r > 0xD8 && g < 0x48 && b < 0x40, "{r} {g} {b}");
+            // Halfway it's a mix.
+            let [_, r, _, _] = pixel(&icon, 18, 6);
+            assert!((0x60..0xC0).contains(&r), "{r}");
+            // The bottom unit has no lamp, the corner is transparent.
+            assert_eq!(pixel(&icon, 28, 26), [255, 0xFF, 0xFF, 0xFF]);
             assert_eq!(pixel(&icon, 0, 0)[0], 0);
-            // The bottom unit has no lamp, just the solid unit.
-            assert_eq!(pixel(&icon, 21, 25), [255, 0xFF, 0xFF, 0xFF]);
         }
 
         #[test]
-        fn off_is_a_hole_and_black_ink_gets_bright_lamps() {
+        fn links_join_the_units_into_an_s() {
+            let icon = render(32, Lamp::Off, Lamp::Off, Ink::White);
+            assert_eq!(pixel(&icon, 5, 11), [255, 0xB9, 0xB9, 0xB9]);
+            assert_eq!(pixel(&icon, 26, 11)[0], 0);
+            assert_eq!(pixel(&icon, 26, 21), [255, 0xB9, 0xB9, 0xB9]);
+            assert_eq!(pixel(&icon, 5, 21)[0], 0);
+            // Off leaves the unit plain.
+            assert_eq!(pixel(&icon, 28, 6), [255, 0xFF, 0xFF, 0xFF]);
+        }
+
+        #[test]
+        fn black_ink_holds_the_lamp_solid_further_in() {
             let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Black);
-            // Apache's slot is cut out of its unit.
-            assert_eq!(pixel(&icon, 21, 7)[0], 0);
-            assert_eq!(pixel(&icon, 10, 7), [255, 0, 0, 0]);
-            assert_eq!(pixel(&icon, 21, 16), [255, 0xE9, 0xB4, 0x4C]);
+            assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
+            assert_eq!(pixel(&icon, 20, 16), [255, 0xB0, 0x7A, 0x12]);
+            assert_eq!(pixel(&icon, 5, 11), [255, 0x73, 0x73, 0x73]);
+        }
+
+        #[test]
+        fn template_links_are_translucent() {
+            let icon = render(32, Lamp::On, Lamp::Off, Ink::Template);
+            assert_eq!(pixel(&icon, 5, 11), [140, 0, 0, 0]);
+            assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
         }
     }
 }

@@ -62,6 +62,13 @@ impl Palette {
     pub fn accent() -> Rgba {
         pick(rgb(0xF07B2C), rgb(0xD45F17))
     }
+    /// The mark's units and the links between them.
+    pub fn mark() -> Rgba {
+        pick(rgb(0xFFFFFF), rgb(0x000000))
+    }
+    pub fn mark_link() -> Rgba {
+        pick(rgb(0xB9B9B9), rgb(0x737373))
+    }
     pub fn ok() -> Rgba {
         pick(rgb(0x4CC38A), rgb(0x1F8F58))
     }
