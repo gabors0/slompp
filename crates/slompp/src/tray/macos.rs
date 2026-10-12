@@ -18,6 +18,7 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSSize, NSString};
 use slompp_core::Module;
 
 use super::{MenuEntry, TrayCommand, TrayState, icon};
+use crate::theme::Lamp;
 
 /// The menu bar is 22 points high; icons in it are 18.
 const ICON_POINTS: f64 = 18.0;
@@ -149,14 +150,18 @@ pub fn spawn(
     Ok(handle)
 }
 
-/// The rack icon with the modules' lamps. In colour, not a template image:
-/// the lamps are the point.
+/// The rack icon with the modules' lamps. A template image, which AppKit
+/// draws black or white to suit the menu bar, unless a lamp shows a fault:
+/// that one is red, so the rest gets the ink for the system's appearance.
 fn image(state: &TrayState) -> Option<Retained<NSImage>> {
-    let pixmap = icon::render(
-        ICON_PIXELS,
-        state.lamp(Module::Apache),
-        state.lamp(Module::MySql),
-    );
+    let (apache, mysql) = (state.lamp(Module::Apache), state.lamp(Module::MySql));
+    let fault = apache == Lamp::Fault || mysql == Lamp::Fault;
+    let ink = if fault {
+        icon::Ink::for_panel(state.light_panel)
+    } else {
+        icon::Ink::Black
+    };
+    let pixmap = icon::render(ICON_PIXELS, apache, mysql, ink);
     let (width, height) = (pixmap.width as isize, pixmap.height as isize);
     // SAFETY: null planes make the representation allocate its own buffer.
     let rep = unsafe {
@@ -193,5 +198,6 @@ fn image(state: &TrayState) -> Option<Retained<NSImage>> {
     rep.setSize(size);
     let image = NSImage::initWithSize(NSImage::alloc(), size);
     image.addRepresentation(&rep);
+    image.setTemplate(!fault);
     Some(image)
 }

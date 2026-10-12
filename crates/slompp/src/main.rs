@@ -56,7 +56,7 @@ fn main() {
         cx.set_global(PanelWindow::default());
 
         let controller = Controller::init(cx);
-        let state = controller.read(cx).tray_snapshot();
+        let state = controller.read(cx).tray_snapshot(cx);
         match tray::spawn(state, commands.clone()) {
             Ok(tray) => controller.update(cx, |c, cx| c.set_tray(tray, cx)),
             Err(err) => tracing::info!("{err:#}; closing the window will quit"),

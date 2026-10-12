@@ -46,6 +46,8 @@ pub struct TrayState {
     pub site_url: Option<String>,
     /// `None` until phpMyAdmin is installed.
     pub phpmyadmin_url: Option<String>,
+    /// Whether the icon sits on a light panel, so it's drawn in black.
+    pub light_panel: bool,
 }
 
 impl TrayState {
@@ -135,6 +137,59 @@ impl TrayState {
     }
 }
 
+/// Whether the panel the icon sits on is light, given whether the system's
+/// colour scheme is. Desktops don't tell tray icons, and the panel mostly
+/// follows the colour scheme, except: GNOME's top bar is always dark, and a
+/// Plasma style other than the default one (Breeze, which follows the
+/// colour scheme) can be dark or light on its own.
+pub fn light_panel(light_scheme: bool) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let desktops = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        let desktop = |name: &str| desktops.split(':').any(|d| d.eq_ignore_ascii_case(name));
+        if desktop("GNOME") {
+            return false;
+        }
+        if desktop("KDE")
+            && let Some(light) = plasma_style().as_deref().and_then(plasma_style_is_light)
+        {
+            return light;
+        }
+    }
+    light_scheme
+}
+
+/// The Plasma style's name, from `plasmarc`.
+#[cfg(target_os = "linux")]
+fn plasma_style() -> Option<String> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|home| home.join(".config")))?;
+    let text = std::fs::read_to_string(config.join("plasmarc")).ok()?;
+    let mut in_theme = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_theme = line == "[Theme]";
+        } else if in_theme && let Some(name) = line.strip_prefix("name=") {
+            return Some(name.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Whether a Plasma style has a light panel, for the ones whose name says.
+#[cfg(target_os = "linux")]
+fn plasma_style_is_light(name: &str) -> Option<bool> {
+    let name = name.to_ascii_lowercase();
+    if name.contains("dark") {
+        Some(false)
+    } else if name.contains("light") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 struct SlomppTray {
     state: TrayState,
@@ -180,6 +235,7 @@ impl ksni::Tray for SlomppTray {
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let apache = self.state.lamp(Module::Apache);
         let mysql = self.state.lamp(Module::MySql);
+        let ink = icon::Ink::for_panel(self.state.light_panel);
         [16, 22, 24, 32, 48, 64]
             .into_iter()
             .map(|size| {
@@ -187,7 +243,7 @@ impl ksni::Tray for SlomppTray {
                     width,
                     height,
                     data,
-                } = icon::render(size, apache, mysql);
+                } = icon::render(size, apache, mysql, ink);
                 ksni::Icon {
                     width,
                     height,
@@ -259,10 +315,46 @@ pub fn spawn(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 /// The tray icon, drawn in code: three rack units like the panel's mark.
 /// The top lamp is Apache's, the middle one MySQL's.
+///
+/// It's monochrome like the panel's other icons, white on dark panels and
+/// black on light ones: the units are half-transparent ink, a lamp is a slot
+/// cut out of its unit, lit solid when running and half when starting or
+/// stopping. Only a fault is coloured. Everything but that is in the alpha
+/// channel, so on macOS it can be a template image.
 pub mod icon {
     use crate::theme::Lamp;
 
     type Rgb = [u8; 3];
+
+    /// What the icon is drawn in.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Ink {
+        /// For dark panels.
+        White,
+        /// For light panels.
+        Black,
+    }
+
+    impl Ink {
+        pub fn for_panel(light: bool) -> Self {
+            if light { Ink::Black } else { Ink::White }
+        }
+
+        fn color(self) -> Rgb {
+            match self {
+                Ink::White => [0xFF, 0xFF, 0xFF],
+                Ink::Black => [0x00, 0x00, 0x00],
+            }
+        }
+
+        /// Red that holds up against the panel.
+        fn fault(self) -> Rgb {
+            match self {
+                Ink::White => [0xEF, 0x64, 0x58],
+                Ink::Black => [0xD2, 0x3B, 0x30],
+            }
+        }
+    }
 
     /// Unpremultiplied ARGB32 pixels, a byte per channel in that order.
     pub struct Pixmap {
@@ -271,19 +363,10 @@ pub mod icon {
         pub data: Vec<u8>,
     }
 
-    const UNIT: Rgb = [0x9B, 0xA3, 0xB3];
-    const LAMP_OFF: Rgb = [0x4A, 0x51, 0x60];
+    /// The units' opacity; lit lamps are opaque.
+    const UNIT_ALPHA: f32 = 0.5;
 
-    fn lamp_color(lamp: Lamp) -> Rgb {
-        match lamp {
-            Lamp::Off => LAMP_OFF,
-            Lamp::Busy => [0xE9, 0xB4, 0x4C],
-            Lamp::On => [0x4C, 0xC3, 0x8A],
-            Lamp::Fault => [0xEF, 0x64, 0x58],
-        }
-    }
-
-    /// A rounded rectangle in the 32×32 design grid.
+    /// A rounded rectangle in the 32×32 design grid. Alpha 0 cuts a hole.
     struct Shape {
         x0: f32,
         y0: f32,
@@ -291,6 +374,7 @@ pub mod icon {
         y1: f32,
         radius: f32,
         color: Rgb,
+        alpha: f32,
     }
 
     impl Shape {
@@ -306,7 +390,7 @@ pub mod icon {
         }
     }
 
-    fn shapes(apache: Lamp, mysql: Lamp) -> Vec<Shape> {
+    fn shapes(apache: Lamp, mysql: Lamp, ink: Ink) -> Vec<Shape> {
         let mut shapes = Vec::new();
         let rows = [(3.5, Some(apache)), (12.5, Some(mysql)), (21.5, None)];
         for (y, lamp) in rows {
@@ -316,50 +400,56 @@ pub mod icon {
                 x1: 29.0,
                 y1: y + 7.0,
                 radius: 2.0,
-                color: UNIT,
+                color: ink.color(),
+                alpha: UNIT_ALPHA,
             });
-            if let Some(lamp) = lamp {
-                shapes.push(Shape {
-                    x0: 17.0,
-                    y0: y + 2.0,
-                    x1: 26.5,
-                    y1: y + 5.0,
-                    radius: 1.2,
-                    color: lamp_color(lamp),
-                });
+            let Some(lamp) = lamp else { continue };
+            let slot = |x1, color, alpha| Shape {
+                x0: 16.5,
+                y0: y + 1.75,
+                x1,
+                y1: y + 5.25,
+                radius: 1.2,
+                color,
+                alpha,
+            };
+            shapes.push(slot(26.5, ink.color(), 0.0));
+            match lamp {
+                Lamp::Off => {}
+                Lamp::Busy => shapes.push(slot(21.5, ink.color(), 1.0)),
+                Lamp::On => shapes.push(slot(26.5, ink.color(), 1.0)),
+                Lamp::Fault => shapes.push(slot(26.5, ink.fault(), 1.0)),
             }
         }
         shapes
     }
 
     /// The icon at `size`×`size`, 4×4 supersampled.
-    pub fn render(size: i32, apache: Lamp, mysql: Lamp) -> Pixmap {
+    pub fn render(size: i32, apache: Lamp, mysql: Lamp, ink: Ink) -> Pixmap {
         const SS: i32 = 4;
-        let shapes = shapes(apache, mysql);
+        let shapes = shapes(apache, mysql, ink);
         let scale = 32.0 / size as f32;
         let mut data = Vec::with_capacity((size * size * 4) as usize);
         for py in 0..size {
             for px in 0..size {
                 // Premultiplied sums over the samples.
-                let (mut r, mut g, mut b, mut a) = (0u32, 0u32, 0u32, 0u32);
+                let (mut r, mut g, mut b, mut a) = (0.0, 0.0, 0.0, 0.0);
                 for sy in 0..SS {
                     for sx in 0..SS {
                         let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
                         let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
                         // The topmost shape wins.
                         if let Some(shape) = shapes.iter().rev().find(|s| s.contains(x, y)) {
-                            r += u32::from(shape.color[0]);
-                            g += u32::from(shape.color[1]);
-                            b += u32::from(shape.color[2]);
-                            a += 255;
+                            r += f32::from(shape.color[0]) * shape.alpha;
+                            g += f32::from(shape.color[1]) * shape.alpha;
+                            b += f32::from(shape.color[2]) * shape.alpha;
+                            a += shape.alpha;
                         }
                     }
                 }
-                let n = (SS * SS) as u32;
-                let alpha = a / n;
-                let unpremultiply = |c: u32| (c * 255).checked_div(a).unwrap_or(0) as u8;
+                let unpremultiply = |c: f32| if a > 0.0 { (c / a).round() as u8 } else { 0 };
                 data.extend_from_slice(&[
-                    alpha as u8,
+                    (a * 255.0 / (SS * SS) as f32).round() as u8,
                     unpremultiply(r),
                     unpremultiply(g),
                     unpremultiply(b),
@@ -384,14 +474,25 @@ pub mod icon {
 
         #[test]
         fn lamps_show_each_modules_state() {
-            let icon = render(32, Lamp::On, Lamp::Fault);
+            let icon = render(32, Lamp::On, Lamp::Fault, Ink::White);
             assert_eq!(icon.data.len(), 32 * 32 * 4);
             // The middle of each lamp, and the corner (transparent).
-            assert_eq!(pixel(&icon, 21, 7), [255, 0x4C, 0xC3, 0x8A]);
+            assert_eq!(pixel(&icon, 21, 7), [255, 0xFF, 0xFF, 0xFF]);
             assert_eq!(pixel(&icon, 21, 16), [255, 0xEF, 0x64, 0x58]);
             assert_eq!(pixel(&icon, 0, 0)[0], 0);
-            // The bottom unit has no lamp.
-            assert_eq!(pixel(&icon, 21, 25), [255, 0x9B, 0xA3, 0xB3]);
+            // The bottom unit has no lamp, just the half-transparent unit.
+            assert_eq!(pixel(&icon, 21, 25), [128, 0xFF, 0xFF, 0xFF]);
+        }
+
+        #[test]
+        fn off_is_a_hole_and_busy_half_lit() {
+            let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Black);
+            // Apache's slot is cut out of its unit.
+            assert_eq!(pixel(&icon, 21, 7)[0], 0);
+            assert_eq!(pixel(&icon, 10, 7), [128, 0, 0, 0]);
+            // MySQL's lamp is lit on the left, empty on the right.
+            assert_eq!(pixel(&icon, 18, 16), [255, 0, 0, 0]);
+            assert_eq!(pixel(&icon, 24, 16)[0], 0);
         }
     }
 }
@@ -434,11 +535,20 @@ mod tests {
             ],
             site_url: None,
             phpmyadmin_url: None,
+            light_panel: false,
         };
         assert_eq!(
             state.summary(),
             "Apache: Running on 8080, 8443\nMySQL: Stopped"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn plasma_styles_named_dark_or_light() {
+        assert_eq!(plasma_style_is_light("breeze-dark"), Some(false));
+        assert_eq!(plasma_style_is_light("breeze-light"), Some(true));
+        assert_eq!(plasma_style_is_light("default"), None);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -456,6 +566,7 @@ mod tests {
             ],
             site_url: Some("http://localhost:8080/".into()),
             phpmyadmin_url: None,
+            light_panel: false,
         };
         assert_eq!(
             state.menu(),

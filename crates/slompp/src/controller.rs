@@ -12,8 +12,9 @@ use slompp_core::phpmyadmin::{self, Progress};
 use slompp_core::{Module, ModuleStatus, Problem, Settings, Stack, desktop};
 
 use crate::log::{Kind, Log};
+use crate::panel;
 use crate::theme::Lamp;
-use crate::tray::{TrayHandle, TrayModule, TrayState};
+use crate::tray::{self, TrayHandle, TrayModule, TrayState};
 
 /// What the panel is doing with a module, on top of what the OS reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +219,7 @@ impl Controller {
     /// Redraws the views and brings the tray up to date.
     fn changed(&mut self, cx: &mut Context<Self>) {
         if let Some(tray) = &self.tray {
-            let state = self.tray_snapshot();
+            let state = self.tray_snapshot(cx);
             if self.tray_state.as_ref() != Some(&state) {
                 tray.set(state.clone());
                 self.tray_state = Some(state);
@@ -227,7 +228,7 @@ impl Controller {
         cx.notify();
     }
 
-    pub fn tray_snapshot(&self) -> TrayState {
+    pub fn tray_snapshot(&self, cx: &App) -> TrayState {
         let modules = self
             .rows
             .iter()
@@ -249,6 +250,7 @@ impl Controller {
             modules,
             site_url: self.stack.admin_url(Module::Apache),
             phpmyadmin_url: self.stack.admin_url(Module::MySql),
+            light_panel: tray::light_panel(panel::wants_light(cx.window_appearance())),
         }
     }
 
