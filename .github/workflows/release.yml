@@ -1,0 +1,110 @@
+# Builds SLOPP for Linux and macOS when a version tag is pushed, and publishes
+# the builds as a GitHub release:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag must match the workspace version in Cargo.toml. "Run workflow" in the
+# Actions tab builds the chosen branch without releasing it; the builds are
+# then attached to the run as artifacts.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
+            exit 1
+          fi
+
+  linux:
+    needs: version
+    # The binaries need the glibc of the build machine or newer (2.39 here).
+    runs-on: ubuntu-24.04
+    env:
+      NAME: slopp-${{ needs.version.outputs.version }}-linux-x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # The libraries the panel links against; Wayland and Vulkan are loaded
+      # at run time.
+      - name: Install GPUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev
+      - run: cargo build --release --locked -p slopp -p slopp-core
+      - name: Package
+        run: |
+          mkdir "$NAME"
+          cp target/release/slopp target/release/sloppctl README.md "$NAME/"
+          cp crates/slopp/assets/linux/org.slopp.Slopp.desktop \
+            crates/slopp/assets/linux/org.slopp.Slopp.svg "$NAME/"
+          tar -czf "$NAME.tar.gz" "$NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: ${{ env.NAME }}.tar.gz
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-15
+    env:
+      NAME: SLOPP-${{ needs.version.outputs.version }}-macos-arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/bundle-macos.sh
+      # ditto keeps the bundle's signature and metadata intact.
+      - run: ditto -c -k --keepParent target/release/SLOPP.app "$NAME.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: ${{ env.NAME }}.zip
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          body: |
+            SLOPP runs the stock servers, so install them first: Apache, PHP-FPM
+            (or PHP's Apache module) and the MariaDB server from your package
+            manager on Linux, `brew install php mariadb` on macOS.
+
+            **Linux** (x86_64, glibc 2.39 or newer): unpack and run `slopp`, or
+            `sloppctl` from a terminal. On NixOS use `nix run` instead.
+
+            **macOS** (Apple silicon): unzip and move `SLOPP.app` to
+            /Applications. The app isn't notarized, so macOS blocks the first
+            launch: allow it in System Settings → Privacy & Security, or run
+            `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
