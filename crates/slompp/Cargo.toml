@@ -1,0 +1,17 @@
+[package]
+name = "slompp"
+description = "SLOMPP: an XAMPP-style control panel for Apache, PHP, MariaDB and phpMyAdmin, built with GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+slompp-core.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-channel = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
