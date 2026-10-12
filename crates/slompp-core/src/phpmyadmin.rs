@@ -1,21 +1,32 @@
 //! phpMyAdmin, which XAMPP bundles. SLOMPP downloads the current release from
-//! phpmyadmin.net on request and configures it for the stack's MariaDB.
+//! phpmyadmin.net on request and configures it for the stack's MariaDB,
+//! with the dark BooDark theme, in orange, as its default.
 
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, bail};
+use sha2::{Digest as _, Sha256};
 
 use crate::dbadmin::{Installed, Progress, download};
 use crate::{Layout, templates};
 
 const VERSION_URL: &str = "https://www.phpmyadmin.net/home_page/version.txt";
 
+/// BooDark, a dark Bootstrap theme for phpMyAdmin 5.2, in the orange that
+/// matches the panel's accent. (BooDark 1.2.0's own orange scheme is the cyan
+/// one relabelled.) Pinned and checked: themes have no "latest" to ask for.
+/// Update all three together.
+pub const THEME: &str = "boodark-orange";
+const THEME_URL: &str =
+    "https://files.phpmyadmin.net/themes/boodark-orange/1.1.0/boodark-orange-1.1.0.zip";
+const THEME_SHA256: &str = "11311ee95925bce089808bc3905db83412b1951ee99243f5b07986547788082e";
+
 pub fn installed(layout: &Layout) -> bool {
     layout.phpmyadmin().join("index.php").is_file()
 }
 
-/// Downloads and unpacks the latest phpMyAdmin into `phpMyAdmin/` and writes
-/// its config. Blocking; run it off the UI thread.
+/// Downloads and unpacks the latest phpMyAdmin and BooDark into `phpMyAdmin/`
+/// and writes its config. Blocking; run it off the UI thread.
 pub fn install(
     layout: &Layout,
     mysql_port: u16,
@@ -43,6 +54,10 @@ pub fn install(
     if !unpacked.join("index.php").is_file() {
         bail!("the download doesn't look like phpMyAdmin (no index.php)");
     }
+    let theme_zip = staging.join("theme.zip");
+    download(THEME_URL, &theme_zip, |_| {})?;
+    check_sha256(&theme_zip, THEME_SHA256)?;
+    install_theme(&theme_zip, &unpacked.join("themes").join(THEME))?;
 
     // Keep an existing config (people edit it); replace everything else.
     let target = layout.phpmyadmin();
@@ -54,7 +69,7 @@ pub fn install(
     std::fs::rename(&unpacked, &target)
         .with_context(|| format!("moving phpMyAdmin to {}", target.display()))?;
     let config = match old_config {
-        Some(text) => text,
+        Some(text) => with_theme_default(&text).unwrap_or(text),
         None => templates::phpmyadmin_config(layout, &secret()?, mysql_port),
     };
     std::fs::write(layout.phpmyadmin_config(), config)?;
@@ -63,6 +78,40 @@ pub fn install(
     Ok(Installed {
         version,
         apache_conf_changed: false,
+    })
+}
+
+fn check_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != expected {
+        bail!(
+            "{} doesn't match its checksum (expected {expected}, got {actual})",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn install_theme(zip_path: &Path, dir: &Path) -> anyhow::Result<()> {
+    unpack_stripping_top_dir(zip_path, dir)?;
+    if !dir.join("theme.json").is_file() {
+        bail!("the theme download doesn't look like a phpMyAdmin theme");
+    }
+    Ok(())
+}
+
+/// Makes the theme the default in a config written before SLOMPP
+/// installed it. `None` when the config already names a default.
+fn with_theme_default(config: &str) -> Option<String> {
+    if config.contains("ThemeDefault") {
+        return None;
+    }
+    let line = format!("$cfg['ThemeDefault'] = '{THEME}';\n");
+    let config = config.trim_end();
+    Some(match config.strip_suffix("?>") {
+        Some(body) => format!("{}\n{line}?>\n", body.trim_end()),
+        None => format!("{config}\n\n{line}"),
     })
 }
 
@@ -169,6 +218,35 @@ mod tests {
         unpack_stripping_top_dir(&zip_path, &out).unwrap();
         assert!(out.join("index.php").is_file());
         assert!(out.join("js/app.js").is_file());
+    }
+
+    #[test]
+    fn adds_the_theme_to_old_configs_once() {
+        let new = with_theme_default("<?php\n$cfg['x'] = 1;\n").unwrap();
+        assert_eq!(
+            new,
+            "<?php\n$cfg['x'] = 1;\n\n$cfg['ThemeDefault'] = 'boodark-orange';\n"
+        );
+        assert_eq!(with_theme_default(&new), None);
+
+        let closed = with_theme_default("<?php\n$cfg['x'] = 1;\n?>\n").unwrap();
+        assert_eq!(
+            closed,
+            "<?php\n$cfg['x'] = 1;\n$cfg['ThemeDefault'] = 'boodark-orange';\n?>\n"
+        );
+
+        let template = templates::phpmyadmin_config(&Layout::new("/s"), "x", 3306);
+        assert_eq!(with_theme_default(&template), None);
+    }
+
+    #[test]
+    fn checks_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, "abc").unwrap();
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        check_sha256(&path, abc).unwrap();
+        assert!(check_sha256(&path, &abc.replace('b', "c")).is_err());
     }
 
     #[test]

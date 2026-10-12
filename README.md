@@ -79,7 +79,7 @@ apache/logs/                 error.log, access.log
 php/php.ini                  PHP config, php/logs/php_error_log
 mysql/my.cnf                 MariaDB config, mysql/data/ the databases
 phpMyAdmin/                  after "Get phpMyAdmin" (MySQL's Admin menu)
-adminer/                     after "Get Adminer": adminer.php, and index.php to edit
+adminer/                     after "Get Adminer": adminer.php, index.php and adminer.css to edit
 tmp/  run/                   sockets, sessions, pid files
 ```
 
@@ -89,6 +89,12 @@ passed on the command line at start, so changing ports in Settings doesn't
 touch your edits. The one exception: installing Adminer into a stack whose
 `httpd-slompp.conf` predates it appends the `/adminer` alias (restart Apache
 afterwards).
+
+phpMyAdmin gets the dark BooDark theme (orange, like the panel) as its
+default; its home page still offers the stock themes. Adminer gets a design
+in the panel's colours that follows the system's light or dark mode; delete
+`adminer/adminer.css` for Adminer's own look. "Update" in MySQL's Admin menu
+fetches the latest release and keeps your config.
 
 Like XAMPP, MariaDB's `root` user has no password and phpMyAdmin and Adminer
 log in as root. Both only listen on localhost; don't expose this stack to a network.

@@ -202,6 +202,11 @@ impl Layout {
     pub fn adminer_index(&self) -> PathBuf {
         self.adminer().join("index.php")
     }
+
+    /// The design; Adminer picks up `adminer.css` beside the page.
+    pub fn adminer_css(&self) -> PathBuf {
+        self.adminer().join("adminer.css")
+    }
 }
 
 /// A base directory: `$var` when it is an absolute path, else the

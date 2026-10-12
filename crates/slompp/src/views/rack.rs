@@ -317,7 +317,7 @@ fn render_actions(
         .child(toggle)
 }
 
-/// MySQL's Admin menu: open phpMyAdmin or Adminer, or download them.
+/// MySQL's Admin menu: open phpMyAdmin or Adminer, download or update them.
 fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
     let layout = ctl.stack().layout();
     let installed: Vec<(DbAdmin, bool)> = DbAdmin::ALL
@@ -333,9 +333,7 @@ fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
         .dropdown_caret(true)
         .dropdown_menu_with_anchor(gpui_kit::Anchor::TopRight, move |mut menu, _, _| {
             let open = |&(tool, installed): &(DbAdmin, bool)| installed.then_some(tool);
-            let get = |&(tool, installed): &(DbAdmin, bool)| (!installed).then_some(tool);
             let opens: Vec<DbAdmin> = installed.iter().filter_map(open).collect();
-            let gets: Vec<DbAdmin> = installed.iter().filter_map(get).collect();
             for &tool in &opens {
                 menu = menu.item(
                     PopupMenuItem::new(format!("Open {}", tool.name()))
@@ -345,17 +343,21 @@ fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
                         }),
                 );
             }
-            if !opens.is_empty() && !gets.is_empty() {
+            if !opens.is_empty() {
                 menu = menu.separator();
             }
-            for &tool in &gets {
-                menu = menu.item(
-                    PopupMenuItem::new(format!("Get {} from {}", tool.name(), tool.site()))
-                        .disabled(installing)
-                        .on_click(move |_, _, cx| {
-                            Controller::global(cx).update(cx, |c, cx| c.install_db_admin(tool, cx));
-                        }),
-                );
+            // Updating keeps the config and fetches the latest release.
+            for &(tool, installed) in &installed {
+                let label = if installed {
+                    format!("Update {}", tool.name())
+                } else {
+                    format!("Get {} from {}", tool.name(), tool.site())
+                };
+                menu = menu.item(PopupMenuItem::new(label).disabled(installing).on_click(
+                    move |_, _, cx| {
+                        Controller::global(cx).update(cx, |c, cx| c.install_db_admin(tool, cx));
+                    },
+                ));
             }
             menu
         })

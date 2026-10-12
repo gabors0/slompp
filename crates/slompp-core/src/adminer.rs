@@ -1,6 +1,7 @@
 //! Adminer, a database manager in one PHP file. SLOMPP downloads the MySQL
 //! build from adminer.org into `adminer/adminer.php` and serves it through an
-//! `index.php` of its own that logs in as root, like phpMyAdmin's config.
+//! `index.php` of its own that logs in as root, like phpMyAdmin's config, and
+//! styles it with `adminer.css` in the panel's colours.
 
 use anyhow::{Context as _, bail};
 
@@ -15,8 +16,8 @@ pub fn installed(layout: &Layout) -> bool {
     layout.adminer_php().is_file() && layout.adminer_index().is_file()
 }
 
-/// Downloads the latest Adminer into `adminer/`, writes its `index.php` unless
-/// there is one, and adds `/adminer` to Apache's config if it isn't there.
+/// Downloads the latest Adminer into `adminer/`, writes its `index.php` and
+/// `adminer.css` unless they exist, and adds `/adminer` to Apache's config if it isn't there.
 /// Blocking; run it off the UI thread.
 pub fn install(layout: &Layout, mut progress: impl FnMut(Progress)) -> anyhow::Result<Installed> {
     progress(Progress::Checking);
@@ -41,6 +42,7 @@ pub fn install(layout: &Layout, mut progress: impl FnMut(Progress)) -> anyhow::R
     std::fs::rename(&file, layout.adminer_php())
         .with_context(|| format!("moving Adminer to {}", layout.adminer().display()))?;
     write_once(&layout.adminer_index(), &templates::adminer_index(layout))?;
+    write_once(&layout.adminer_css(), templates::ADMINER_CSS)?;
     let apache_conf_changed = add_alias(layout)?;
     let _ = std::fs::remove_dir_all(&staging);
     Ok(Installed {

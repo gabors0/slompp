@@ -356,6 +356,7 @@ max_allowed_packet = 64M
 pub fn phpmyadmin_config(layout: &Layout, secret: &str, port: u16) -> String {
     let socket = conf_path(&layout.mysql_socket());
     let tmp = conf_path(&layout.tmp().join("phpmyadmin"));
+    let theme = crate::phpmyadmin::THEME;
     format!(
         r#"<?php
 /* phpMyAdmin configuration for SLOMPP. Yours to edit. */
@@ -371,6 +372,8 @@ $cfg['Servers'][$i]['AllowNoPassword'] = true;
 $cfg['Servers'][$i]['host'] = 'localhost';
 $cfg['Servers'][$i]['socket'] = '{socket}';
 $cfg['Servers'][$i]['port'] = '{port}';
+
+$cfg['ThemeDefault'] = '{theme}';
 
 $cfg['TempDir'] = '{tmp}';
 $cfg['UploadDir'] = '';
@@ -413,13 +416,18 @@ function adminer_object()
     return new SlomppAdminer();
 }}
 
-if (!isset($_GET['username']) && !$_POST) {{
+// Log in instead of showing the form: on the way in, and on a bookmarked
+// page the browser has no session for. The permanent login brings back
+// sessions PHP has expired.
+$known = !empty($_COOKIE['adminer_sid']) || !empty($_COOKIE['adminer_permanent']);
+if (!$_POST && (!isset($_GET['username']) || !$known)) {{
     $_POST['auth'] = array(
         'driver' => 'server',
         'server' => '',
         'username' => 'root',
         'password' => '',
-        'db' => '',
+        'db' => isset($_GET['db']) ? $_GET['db'] : '',
+        'permanent' => 1,
     );
 }}
 
@@ -427,6 +435,9 @@ include __DIR__ . '/adminer.php';
 "#
     )
 }
+
+/// Adminer's design: the panel's palette, light or dark with the system.
+pub const ADMINER_CSS: &str = include_str!("adminer.css");
 
 /// `htdocs/index.php` for a new stack.
 pub fn dashboard() -> &'static str {

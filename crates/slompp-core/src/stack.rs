@@ -361,6 +361,7 @@ impl Stack {
         };
         files.push(named("phpMyAdmin (config.inc.php)", l.phpmyadmin_config()));
         files.push(named("Adminer (index.php)", l.adminer_index()));
+        files.push(named("Adminer (adminer.css)", l.adminer_css()));
         files
     }
 

@@ -20,6 +20,7 @@ rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"]
 ureq = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 getrandom = "0.3"
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
