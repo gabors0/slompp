@@ -150,16 +150,17 @@ pub fn spawn(
     Ok(handle)
 }
 
-/// The rack icon with the modules' lamps. A template image, which AppKit
-/// draws black or white to suit the menu bar, unless a lamp shows a fault:
-/// that one is red, so the rest gets the ink for the system's appearance.
+/// The rack icon with the modules' lamps. While nothing is lit it's a
+/// template image, which AppKit draws black or white to suit the menu bar;
+/// lit lamps have colour, so then it gets the ink for the system's
+/// appearance.
 fn image(state: &TrayState) -> Option<Retained<NSImage>> {
     let (apache, mysql) = (state.lamp(Module::Apache), state.lamp(Module::MySql));
-    let fault = apache == Lamp::Fault || mysql == Lamp::Fault;
-    let ink = if fault {
-        icon::Ink::for_panel(state.light_panel)
-    } else {
+    let template = apache == Lamp::Off && mysql == Lamp::Off;
+    let ink = if template {
         icon::Ink::Black
+    } else {
+        icon::Ink::for_panel(state.light_panel)
     };
     let pixmap = icon::render(ICON_PIXELS, apache, mysql, ink);
     let (width, height) = (pixmap.width as isize, pixmap.height as isize);
@@ -198,6 +199,6 @@ fn image(state: &TrayState) -> Option<Retained<NSImage>> {
     rep.setSize(size);
     let image = NSImage::initWithSize(NSImage::alloc(), size);
     image.addRepresentation(&rep);
-    image.setTemplate(!fault);
+    image.setTemplate(template);
     Some(image)
 }

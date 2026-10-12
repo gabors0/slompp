@@ -311,11 +311,10 @@ pub fn spawn(
 /// The tray icon, drawn in code: three rack units like the panel's mark.
 /// The top lamp is Apache's, the middle one MySQL's.
 ///
-/// It's monochrome like the panel's other icons, white on dark panels and
-/// black on light ones: the units are half-transparent ink, a lamp is a slot
-/// cut out of its unit, lit solid when running and half when starting or
-/// stopping. Only a fault is coloured. Everything but that is in the alpha
-/// channel, so on macOS it can be a template image.
+/// The units are solid white on dark panels and black on light ones, like
+/// the panel's other icons. A lamp is a slot cut out of its unit, empty when
+/// stopped and filled with the lamp's colour otherwise, in shades that stand
+/// out against the unit around them.
 pub mod icon {
     use crate::theme::Lamp;
 
@@ -342,12 +341,18 @@ pub mod icon {
             }
         }
 
-        /// Red that holds up against the panel.
-        fn fault(self) -> Rgb {
-            match self {
-                Ink::White => [0xEF, 0x64, 0x58],
-                Ink::Black => [0xD2, 0x3B, 0x30],
-            }
+        /// A lit lamp's colour: deeper on white units, brighter on black.
+        fn lamp(self, lamp: Lamp) -> Option<Rgb> {
+            let (on_white, on_black) = match lamp {
+                Lamp::Off => return None,
+                Lamp::Busy => ([0xC7, 0x84, 0x00], [0xE9, 0xB4, 0x4C]),
+                Lamp::On => ([0x14, 0x9A, 0x50], [0x4C, 0xC3, 0x8A]),
+                Lamp::Fault => ([0xD9, 0x33, 0x27], [0xEF, 0x64, 0x58]),
+            };
+            Some(match self {
+                Ink::White => on_white,
+                Ink::Black => on_black,
+            })
         }
     }
 
@@ -357,9 +362,6 @@ pub mod icon {
         pub height: i32,
         pub data: Vec<u8>,
     }
-
-    /// The units' opacity; lit lamps are opaque.
-    const UNIT_ALPHA: f32 = 0.5;
 
     /// A rounded rectangle in the 32×32 design grid. Alpha 0 cuts a hole.
     struct Shape {
@@ -396,25 +398,22 @@ pub mod icon {
                 y1: y + 7.0,
                 radius: 2.0,
                 color: ink.color(),
-                alpha: UNIT_ALPHA,
+                alpha: 1.0,
             });
             let Some(lamp) = lamp else { continue };
-            let slot = |x1, color, alpha| Shape {
+            let (color, alpha) = match ink.lamp(lamp) {
+                Some(color) => (color, 1.0),
+                None => (ink.color(), 0.0),
+            };
+            shapes.push(Shape {
                 x0: 16.5,
                 y0: y + 1.75,
-                x1,
+                x1: 26.5,
                 y1: y + 5.25,
                 radius: 1.2,
                 color,
                 alpha,
-            };
-            shapes.push(slot(26.5, ink.color(), 0.0));
-            match lamp {
-                Lamp::Off => {}
-                Lamp::Busy => shapes.push(slot(21.5, ink.color(), 1.0)),
-                Lamp::On => shapes.push(slot(26.5, ink.color(), 1.0)),
-                Lamp::Fault => shapes.push(slot(26.5, ink.fault(), 1.0)),
-            }
+            });
         }
         shapes
     }
@@ -472,22 +471,20 @@ pub mod icon {
             let icon = render(32, Lamp::On, Lamp::Fault, Ink::White);
             assert_eq!(icon.data.len(), 32 * 32 * 4);
             // The middle of each lamp, and the corner (transparent).
-            assert_eq!(pixel(&icon, 21, 7), [255, 0xFF, 0xFF, 0xFF]);
-            assert_eq!(pixel(&icon, 21, 16), [255, 0xEF, 0x64, 0x58]);
+            assert_eq!(pixel(&icon, 21, 7), [255, 0x14, 0x9A, 0x50]);
+            assert_eq!(pixel(&icon, 21, 16), [255, 0xD9, 0x33, 0x27]);
             assert_eq!(pixel(&icon, 0, 0)[0], 0);
-            // The bottom unit has no lamp, just the half-transparent unit.
-            assert_eq!(pixel(&icon, 21, 25), [128, 0xFF, 0xFF, 0xFF]);
+            // The bottom unit has no lamp, just the solid unit.
+            assert_eq!(pixel(&icon, 21, 25), [255, 0xFF, 0xFF, 0xFF]);
         }
 
         #[test]
-        fn off_is_a_hole_and_busy_half_lit() {
+        fn off_is_a_hole_and_black_ink_gets_bright_lamps() {
             let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Black);
             // Apache's slot is cut out of its unit.
             assert_eq!(pixel(&icon, 21, 7)[0], 0);
-            assert_eq!(pixel(&icon, 10, 7), [128, 0, 0, 0]);
-            // MySQL's lamp is lit on the left, empty on the right.
-            assert_eq!(pixel(&icon, 18, 16), [255, 0, 0, 0]);
-            assert_eq!(pixel(&icon, 24, 16)[0], 0);
+            assert_eq!(pixel(&icon, 10, 7), [255, 0, 0, 0]);
+            assert_eq!(pixel(&icon, 21, 16), [255, 0xE9, 0xB4, 0x4C]);
         }
     }
 }
