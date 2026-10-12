@@ -19,7 +19,11 @@ pub fn installed(layout: &Layout) -> bool {
 /// Downloads the latest Adminer into `adminer/`, writes its `index.php` and
 /// `adminer.css` unless they exist, and adds `/adminer` to Apache's config if it isn't there.
 /// Blocking; run it off the UI thread.
-pub fn install(layout: &Layout, mut progress: impl FnMut(Progress)) -> anyhow::Result<Installed> {
+pub fn install(
+    layout: &Layout,
+    mysql_port: u16,
+    mut progress: impl FnMut(Progress),
+) -> anyhow::Result<Installed> {
     progress(Progress::Checking);
     let (version, url) = latest_release()?;
 
@@ -41,7 +45,10 @@ pub fn install(layout: &Layout, mut progress: impl FnMut(Progress)) -> anyhow::R
     std::fs::create_dir_all(layout.adminer())?;
     std::fs::rename(&file, layout.adminer_php())
         .with_context(|| format!("moving Adminer to {}", layout.adminer().display()))?;
-    write_once(&layout.adminer_index(), &templates::adminer_index(layout))?;
+    write_once(
+        &layout.adminer_index(),
+        &templates::adminer_index(layout, mysql_port),
+    )?;
     write_once(&layout.adminer_css(), templates::ADMINER_CSS)?;
     let apache_conf_changed = add_alias(layout)?;
     let _ = std::fs::remove_dir_all(&staging);

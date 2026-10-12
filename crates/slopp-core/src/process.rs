@@ -1,6 +1,7 @@
 //! Starting server processes so they outlive the panel, remembering them in
 //! pid files, and telling whether they are still the processes we started.
 
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -13,7 +14,8 @@ use anyhow::Context as _;
 pub struct Tracked {
     pub pid: u32,
     /// Platform start-time token (Linux: clock ticks since boot; macOS:
-    /// microseconds since the epoch), if known.
+    /// microseconds since the epoch; Windows: the creation `FILETIME`), if
+    /// known.
     pub started: Option<u64>,
 }
 
@@ -72,15 +74,41 @@ pub fn spawn_detached(mut cmd: Command, log: &Path) -> anyhow::Result<Child> {
             });
         }
     }
+    let program = cmd.get_program().to_string_lossy().into_owned();
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+        use windows_sys::Win32::System::Threading::{
+            CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
+        };
+        // A console of its own that nobody sees, and no ^C from ours.
+        let flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+        // Leave the panel's job object, if it is in one: a terminal or an IDE
+        // may kill the whole job when it closes. Not every job allows that.
+        cmd.creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB);
+        match cmd.spawn() {
+            Err(err) if err.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+                cmd.creation_flags(flags);
+            }
+            spawned => return spawned.with_context(|| format!("starting {program}")),
+        }
     }
-    let program = cmd.get_program().to_string_lossy().into_owned();
     cmd.spawn().with_context(|| format!("starting {program}"))
+}
+
+/// A command for a helper that runs briefly (`httpd -t`, `mariadbd
+/// --version`). On Windows it gets no console window, which would otherwise
+/// flash up from the panel.
+pub fn command(program: impl AsRef<OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
+    cmd
 }
 
 /// Signals a server starts with the default action for, whatever we ignore.
@@ -128,19 +156,25 @@ pub fn write_pid_file(path: &Path, procs: &[Tracked]) -> anyhow::Result<()> {
 /// Asks processes to exit, waits up to `grace`, then kills what's left.
 /// Returns true if anything had to be killed.
 pub fn terminate(procs: &[Tracked], grace: Duration) -> bool {
-    let alive: Vec<_> = procs.iter().filter(|p| p.is_alive()).copied().collect();
-    for p in &alive {
-        signal_term(p.pid);
+    let mut killed = false;
+    let mut asked = Vec::new();
+    for p in procs.iter().filter(|p| p.is_alive()) {
+        if signal_term(p.pid) {
+            asked.push(*p);
+        } else {
+            // No way to ask this one.
+            signal_kill(p.pid);
+            killed = true;
+        }
     }
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
-        if alive.iter().all(|p| !p.is_alive()) {
-            return false;
+        if asked.iter().all(|p| !p.is_alive()) {
+            return killed;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let mut killed = false;
-    for p in alive.iter().filter(|p| p.is_alive()) {
+    for p in asked.iter().filter(|p| p.is_alive()) {
         signal_kill(p.pid);
         killed = true;
     }
@@ -221,17 +255,25 @@ fn start_time(pid: u32) -> Option<u64> {
     Some(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Windows: the process's creation time.
+#[cfg(windows)]
+fn start_time(pid: u32) -> Option<u64> {
+    win::Process::open(pid, win::QUERY)?.started()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn start_time(_pid: u32) -> Option<u64> {
     None
 }
 
+/// Asks a process to exit. Returns false if there is no way to ask it.
 #[cfg(unix)]
-fn signal_term(pid: u32) {
+fn signal_term(pid: u32) -> bool {
     // SAFETY: plain kill(2).
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGTERM);
     }
+    true
 }
 
 #[cfg(unix)]
@@ -244,24 +286,180 @@ fn signal_kill(pid: u32) {
 
 #[cfg(windows)]
 fn pid_alive(pid: u32) -> bool {
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-        .output()
-        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
+    match win::Process::open(pid, win::QUERY) {
+        Some(process) => process.running(),
+        // Someone else's process: it exists, but it isn't one we started.
+        None => win::last_error() == windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED,
+    }
 }
 
+/// Windows has no SIGTERM. The servers stop cleanly when a named event of
+/// theirs is set: Apache's `ap<pid>_shutdown` (what `httpd -k shutdown`
+/// sets) and MariaDB's `MySQLShutdown<pid>`.
 #[cfg(windows)]
-fn signal_term(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .output();
+fn signal_term(pid: u32) -> bool {
+    win::set_event(&format!("ap{pid}_shutdown")) || win::set_event(&format!("MySQLShutdown{pid}"))
 }
 
+/// Ends the process and everything it started: Apache's worker process
+/// would otherwise keep the ports.
 #[cfg(windows)]
 fn signal_kill(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .output();
+    for pid in win::tree(pid) {
+        if let Some(process) = win::Process::open(pid, win::TERMINATE) {
+            process.terminate();
+        }
+    }
+}
+
+/// The Win32 calls behind the functions above, and [`crate::net`]'s process
+/// names.
+#[cfg(windows)]
+pub(crate) mod win {
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::path::PathBuf;
+
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        EVENT_MODIFY_STATE, GetProcessTimes, OpenEventW, OpenProcess, PROCESS_ACCESS_RIGHTS,
+        PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        PROCESS_TERMINATE, QueryFullProcessImageNameW, SetEvent, TerminateProcess,
+        WaitForSingleObject,
+    };
+
+    pub const QUERY: PROCESS_ACCESS_RIGHTS =
+        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
+    pub const TERMINATE: PROCESS_ACCESS_RIGHTS = PROCESS_TERMINATE;
+
+    pub fn last_error() -> u32 {
+        // SAFETY: no preconditions.
+        unsafe { GetLastError() }
+    }
+
+    /// A handle, closed on drop.
+    struct Handle(HANDLE);
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            // SAFETY: we own the handle.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    pub struct Process(Handle);
+
+    impl Process {
+        pub fn open(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Option<Process> {
+            // SAFETY: plain OpenProcess; a null handle means failure.
+            let handle = unsafe { OpenProcess(access, 0, pid) };
+            (!handle.is_null()).then(|| Process(Handle(handle)))
+        }
+
+        /// Not exited yet (an exited process stays openable while someone
+        /// holds a handle to it, like a zombie).
+        pub fn running(&self) -> bool {
+            // SAFETY: a process handle opened with SYNCHRONIZE.
+            unsafe { WaitForSingleObject(self.0.0, 0) == WAIT_TIMEOUT }
+        }
+
+        pub fn started(&self) -> Option<u64> {
+            let mut times = [FILETIME::default(); 4];
+            let [created, exited, kernel, user] = &mut times;
+            // SAFETY: four valid FILETIMEs to fill.
+            let ok = unsafe { GetProcessTimes(self.0.0, created, exited, kernel, user) };
+            (ok != 0)
+                .then(|| u64::from(created.dwHighDateTime) << 32 | u64::from(created.dwLowDateTime))
+        }
+
+        /// The program's full path.
+        pub fn image(&self) -> Option<PathBuf> {
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            // SAFETY: `len` is the buffer's length in characters.
+            let ok = unsafe {
+                QueryFullProcessImageNameW(self.0.0, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len)
+            };
+            (ok != 0).then(|| std::ffi::OsString::from_wide(&buf[..len as usize]).into())
+        }
+
+        pub fn terminate(&self) {
+            // SAFETY: a process handle opened with PROCESS_TERMINATE.
+            unsafe { TerminateProcess(self.0.0, 1) };
+        }
+    }
+
+    pub fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    /// Sets the named event in this session, if it exists.
+    pub fn set_event(name: &str) -> bool {
+        let name = wide(name);
+        // SAFETY: a NUL-terminated name.
+        let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
+        if event.is_null() {
+            return false;
+        }
+        let event = Handle(event);
+        // SAFETY: an event handle opened for EVENT_MODIFY_STATE.
+        unsafe { SetEvent(event.0) != 0 }
+    }
+
+    /// `pid` and all its descendants, parents first.
+    pub fn tree(pid: u32) -> Vec<u32> {
+        let all = processes();
+        let mut tree = vec![pid];
+        let mut i = 0;
+        while i < tree.len() {
+            let parent = tree[i];
+            let parent_started = Process::open(parent, QUERY).and_then(|p| p.started());
+            for &(child, of) in &all {
+                if of != parent || tree.contains(&child) {
+                    continue;
+                }
+                // Parent ids aren't cleared when the parent exits, and pids
+                // are reused: a real child started after its parent.
+                let child_started = Process::open(child, QUERY).and_then(|p| p.started());
+                if let (Some(parent), Some(child)) = (parent_started, child_started)
+                    && child < parent
+                {
+                    continue;
+                }
+                tree.push(child);
+            }
+            i += 1;
+        }
+        tree
+    }
+
+    /// `(pid, parent pid)` of every process.
+    fn processes() -> Vec<(u32, u32)> {
+        // SAFETY: plain snapshot call; INVALID_HANDLE_VALUE means failure.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+        let snapshot = Handle(snapshot);
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut all = Vec::new();
+        // SAFETY: `entry` is a PROCESSENTRY32W with its size set.
+        let mut more = unsafe { Process32FirstW(snapshot.0, &mut entry) } != 0;
+        while more {
+            all.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot.0, &mut entry) } != 0;
+        }
+        all
+    }
 }
 
 #[cfg(test)]
@@ -355,6 +553,84 @@ mod tests {
             let status = child.wait().unwrap();
             assert!(!status.success(), "signal {signal} ended the child");
             assert!(started.elapsed() < Duration::from_secs(5));
+        }
+    }
+
+    /// Something to run in the background on Windows, which has no `sleep`:
+    /// this test binary running only this test.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "a child process for the tests below"]
+    fn sleeper() {
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    #[cfg(windows)]
+    fn sleeper_command() -> String {
+        let exe = std::env::current_exe().unwrap();
+        format!(
+            "\"{}\" --ignored --exact process::tests::sleeper",
+            exe.display()
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn kills_a_detached_process_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        // cmd, and the sleeper as its child.
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", &sleeper_command()]);
+        let mut child = spawn_detached(cmd, &dir.path().join("log")).unwrap();
+        let tracked = Tracked::of(child.id());
+        assert!(tracked.is_alive());
+        let started = tracked.started.expect("a start time");
+        let stale = Tracked {
+            pid: tracked.pid,
+            started: Some(started + 1),
+        };
+        assert!(!stale.is_alive());
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut tree = win::tree(tracked.pid);
+        while tree.len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            tree = win::tree(tracked.pid);
+        }
+        assert_eq!(tree.len(), 2, "cmd and its child");
+        let grandchild = Tracked::of(tree[1]);
+
+        // Neither has a shutdown event to ask: both are killed right away.
+        let asked = Instant::now();
+        assert!(terminate(&[tracked], Duration::from_secs(20)));
+        assert!(asked.elapsed() < Duration::from_secs(5));
+        child.wait().unwrap();
+        assert!(!tracked.is_alive());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while grandchild.is_alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!grandchild.is_alive());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn asks_servers_to_stop_through_their_events() {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+
+        let pid = std::process::id();
+        assert!(!signal_term(pid));
+        for name in [format!("ap{pid}_shutdown"), format!("MySQLShutdown{pid}")] {
+            let name = win::wide(&name);
+            // SAFETY: a NUL-terminated name; the handle is closed below.
+            unsafe {
+                let event = CreateEventW(std::ptr::null(), 1, 0, name.as_ptr());
+                assert!(!event.is_null());
+                assert!(signal_term(pid));
+                assert_eq!(WaitForSingleObject(event, 0), WAIT_OBJECT_0);
+                CloseHandle(event);
+            }
         }
     }
 

@@ -66,7 +66,7 @@ impl DbAdmin {
     ) -> anyhow::Result<Installed> {
         match self {
             DbAdmin::PhpMyAdmin => phpmyadmin::install(layout, mysql_port, progress),
-            DbAdmin::Adminer => adminer::install(layout, progress),
+            DbAdmin::Adminer => adminer::install(layout, mysql_port, progress),
         }
     }
 }

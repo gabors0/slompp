@@ -37,18 +37,21 @@ ServerRoot "{apache}"
 DefaultRuntimeDir "{run}"
 PidFile "{run}/httpd.pid"
 
-# mod_php isn't thread-safe, so it needs the prefork MPM.
-<IfDefine PHP_MODULE>
-    LoadModule mpm_prefork_module "${{SLOPP_MODULES}}/mod_mpm_prefork.so"
-</IfDefine>
-<IfDefine !PHP_MODULE>
-    LoadModule mpm_event_module "${{SLOPP_MODULES}}/mod_mpm_event.so"
-</IfDefine>
+# Apache for Windows has one MPM, built in, and runs the thread-safe
+# mod_php. Elsewhere mod_php isn't thread-safe, so it needs prefork.
+<IfModule !mpm_winnt_module>
+    <IfDefine PHP_MODULE>
+        LoadModule mpm_prefork_module "${{SLOPP_MODULES}}/mod_mpm_prefork.so"
+    </IfDefine>
+    <IfDefine !PHP_MODULE>
+        LoadModule mpm_event_module "${{SLOPP_MODULES}}/mod_mpm_event.so"
+    </IfDefine>
+    <IfModule !unixd_module>
+        LoadModule unixd_module "${{SLOPP_MODULES}}/mod_unixd.so"
+    </IfModule>
+</IfModule>
 
 # Some distributions build these into httpd itself.
-<IfModule !unixd_module>
-    LoadModule unixd_module "${{SLOPP_MODULES}}/mod_unixd.so"
-</IfModule>
 <IfModule !log_config_module>
     LoadModule log_config_module "${{SLOPP_MODULES}}/mod_log_config.so"
 </IfModule>
@@ -138,6 +141,9 @@ LogLevel warn
     MaxSpareThreads 25
     ThreadsPerChild 25
     MaxRequestWorkers 100
+</IfModule>
+<IfModule mpm_winnt_module>
+    ThreadsPerChild 100
 </IfModule>
 
 EnableSendfile on
@@ -236,13 +242,56 @@ SSLSessionCacheTimeout 300
 }
 
 pub fn php_ini(layout: &Layout) -> String {
+    php_ini_for(layout, cfg!(windows))
+}
+
+/// Extensions PHP for Windows ships but doesn't load by itself: what
+/// phpMyAdmin, Adminer and most frameworks need. Elsewhere packages enable
+/// theirs in PHP's own ini directory.
+const WINDOWS_EXTENSIONS: &[&str] = &[
+    "curl",
+    "fileinfo",
+    "gd",
+    "intl",
+    "mbstring",
+    "mysqli",
+    "openssl",
+    "pdo_mysql",
+    "sodium",
+    "zip",
+];
+
+fn php_ini_for(layout: &Layout, windows: bool) -> String {
     let error_log = conf_path(&layout.php_error_log());
     let tmp = conf_path(&layout.tmp());
     let socket = conf_path(&layout.mysql_socket());
+    let (extensions, mysql) = if windows {
+        let lines: String = WINDOWS_EXTENSIONS
+            .iter()
+            .map(|e| format!("extension={e}\n"))
+            .collect();
+        (
+            format!(
+                "; Extensions; add more `extension=` lines here. When Apache starts,\n\
+                 ; SLOPP writes run/php/slopp.ini, which PHP reads after this file:\n\
+                 ; extension_dir (your PHP's ext folder) and mysqli's default port.\n{lines}"
+            ),
+            String::new(),
+        )
+    } else {
+        (
+            "; Extensions come from your PHP installation's own ini directory;\n\
+             ; add `extension=` lines here for more.\n"
+                .to_string(),
+            format!(
+                "\n[MySQLi]\nmysqli.default_socket = \"{socket}\"\n\n\
+                 [Pdo_mysql]\npdo_mysql.default_socket = \"{socket}\"\n"
+            ),
+        )
+    };
     format!(
         r#"; PHP settings for SLOPP: development-friendly, like XAMPP's.
-; Yours to edit. Extensions come from your PHP installation's own ini
-; directory; add `extension=` lines here for more.
+; Yours to edit.
 
 [PHP]
 engine = On
@@ -266,6 +315,7 @@ sys_temp_dir = "{tmp}"
 default_charset = "UTF-8"
 allow_url_fopen = On
 
+{extensions}
 [Date]
 ; date.timezone = Europe/Berlin
 
@@ -274,18 +324,26 @@ session.save_handler = files
 session.save_path = "{tmp}"
 session.use_strict_mode = 1
 session.gc_maxlifetime = 1440
-
-[MySQLi]
-mysqli.default_socket = "{socket}"
-
-[Pdo_mysql]
-pdo_mysql.default_socket = "{socket}"
-
+{mysql}
 [opcache]
 opcache.enable = 1
 opcache.validate_timestamps = 1
 opcache.revalidate_freq = 0
 "#
+    )
+}
+
+/// Windows: `slopp.ini` in [`Layout::php_scan_dir`], so the extensions in
+/// php.ini load from the PHP that runs, and mysqli finds MariaDB on the
+/// port in Settings (what `mysqli.default_socket` does elsewhere).
+/// Rewritten on every start.
+pub fn php_scan_ini(extension_dir: &Path, mysql_port: u16) -> String {
+    format!(
+        "; Written by SLOPP on every start; edit php.ini instead.\n\
+         extension_dir = \"{}\"\n\
+         mysqli.default_host = \"127.0.0.1\"\n\
+         mysqli.default_port = {mysql_port}\n",
+        conf_path(extension_dir)
     )
 }
 
@@ -317,23 +375,36 @@ clear_env = no
 }
 
 pub fn my_cnf(layout: &Layout) -> String {
+    my_cnf_for(layout, cfg!(windows))
+}
+
+/// How clients reach the server: its socket, or on Windows (where MariaDB's
+/// counterpart is a named pipe, off by default) TCP on localhost.
+fn my_cnf_for(layout: &Layout, windows: bool) -> String {
     let data = conf_path(&layout.mysql_data());
     let socket = conf_path(&layout.mysql_socket());
     let error_log = conf_path(&layout.mysql_error_log());
     let run = conf_path(&layout.run());
     let tmp = conf_path(&layout.tmp());
+    let (client, server) = if windows {
+        ("host = 127.0.0.1".to_string(), String::new())
+    } else {
+        (
+            format!("socket = \"{socket}\""),
+            format!("socket = \"{socket}\"\n"),
+        )
+    };
     format!(
         r#"# MariaDB settings for SLOPP. Yours to edit.
 # The port comes from the control panel's settings.
 
 [client]
-socket = "{socket}"
+{client}
 default-character-set = utf8mb4
 
 [mysqld]
 datadir = "{data}"
-socket = "{socket}"
-pid-file = "{run}/mysqld.pid"
+{server}pid-file = "{run}/mysqld.pid"
 tmpdir = "{tmp}"
 log_error = "{error_log}"
 bind-address = 127.0.0.1
@@ -351,10 +422,22 @@ max_allowed_packet = 64M
     )
 }
 
-/// phpMyAdmin's config: log in as root with no password over the socket,
-/// as XAMPP does.
+/// phpMyAdmin's config: log in as root with no password over the socket
+/// (TCP on Windows), as XAMPP does.
 pub fn phpmyadmin_config(layout: &Layout, secret: &str, port: u16) -> String {
-    let socket = conf_path(&layout.mysql_socket());
+    phpmyadmin_config_for(layout, secret, port, cfg!(windows))
+}
+
+fn phpmyadmin_config_for(layout: &Layout, secret: &str, port: u16, windows: bool) -> String {
+    let server = if windows {
+        "$cfg['Servers'][$i]['host'] = '127.0.0.1';".to_string()
+    } else {
+        let socket = conf_path(&layout.mysql_socket());
+        format!(
+            "$cfg['Servers'][$i]['host'] = 'localhost';\n\
+             $cfg['Servers'][$i]['socket'] = '{socket}';"
+        )
+    };
     let tmp = conf_path(&layout.tmp().join("phpmyadmin"));
     let theme = crate::phpmyadmin::THEME;
     format!(
@@ -369,8 +452,7 @@ $cfg['Servers'][$i]['auth_type'] = 'config';
 $cfg['Servers'][$i]['user'] = 'root';
 $cfg['Servers'][$i]['password'] = '';
 $cfg['Servers'][$i]['AllowNoPassword'] = true;
-$cfg['Servers'][$i]['host'] = 'localhost';
-$cfg['Servers'][$i]['socket'] = '{socket}';
+{server}
 $cfg['Servers'][$i]['port'] = '{port}';
 
 $cfg['ThemeDefault'] = '{theme}';
@@ -382,11 +464,19 @@ $cfg['SaveDir'] = '';
     )
 }
 
-/// Adminer's `index.php`: logs in as root over the socket without asking,
-/// then hands over to `adminer.php`. Adminer won't log in without a password
-/// unless told to, hence `login()`.
-pub fn adminer_index(layout: &Layout) -> String {
-    let socket = conf_path(&layout.mysql_socket());
+/// Adminer's `index.php`: logs in as root over the socket (TCP on the MySQL
+/// port on Windows) without asking, then hands over to `adminer.php`.
+/// Adminer won't log in without a password unless told to, hence `login()`.
+pub fn adminer_index(layout: &Layout, port: u16) -> String {
+    adminer_index_for(layout, port, cfg!(windows))
+}
+
+fn adminer_index_for(layout: &Layout, port: u16, windows: bool) -> String {
+    let server = if windows {
+        format!("127.0.0.1:{port}")
+    } else {
+        format!(":{}", conf_path(&layout.mysql_socket()))
+    };
     format!(
         r#"<?php
 /* Adminer for SLOPP. Yours to edit: "Get Adminer" replaces adminer.php,
@@ -399,7 +489,7 @@ function adminer_object()
     {{
         function credentials()
         {{
-            return array(':{socket}', 'root', '');
+            return array('{server}', 'root', '');
         }}
 
         function login($login, $password)
@@ -469,3 +559,49 @@ audio/mpeg                      mp3
 video/mp4                       mp4
 video/webm                      webm
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_reaches_mysql_over_tcp() {
+        let layout = Layout::new("/s");
+        let ini = php_ini_for(&layout, true);
+        assert!(ini.contains("\nextension=mysqli\n"));
+        assert!(!ini.contains("default_socket"));
+        assert!(
+            php_ini_for(&layout, false).contains("mysqli.default_socket = \"/s/tmp/mysql.sock\"")
+        );
+
+        let cnf = my_cnf_for(&layout, true);
+        assert!(cnf.contains("[client]\nhost = 127.0.0.1\n"));
+        assert!(!cnf.contains("socket"));
+        assert!(
+            my_cnf_for(&layout, false).contains("[mysqld]\ndatadir = \"/s/mysql/data\"\nsocket = ")
+        );
+
+        let pma = phpmyadmin_config_for(&layout, "x", 3307, true);
+        assert!(pma.contains("['host'] = '127.0.0.1';\n$cfg['Servers'][$i]['port'] = '3307';"));
+        assert!(!pma.contains("socket"));
+
+        assert!(
+            adminer_index_for(&layout, 3307, true).contains("array('127.0.0.1:3307', 'root', '')")
+        );
+        assert!(
+            adminer_index_for(&layout, 3307, false)
+                .contains("array(':/s/tmp/mysql.sock', 'root', '')")
+        );
+    }
+
+    #[test]
+    fn scan_ini_names_the_extension_dir() {
+        assert_eq!(
+            php_scan_ini(Path::new(r"C:\php\ext"), 3307),
+            "; Written by SLOPP on every start; edit php.ini instead.\n\
+             extension_dir = \"C:/php/ext\"\n\
+             mysqli.default_host = \"127.0.0.1\"\n\
+             mysqli.default_port = 3307\n"
+        );
+    }
+}

@@ -1,10 +1,16 @@
 //! One SLOPP per user. A second launch (from the app menu, say, while the
 //! first sits in the tray) asks the running one to show its window and exits.
+//! They talk over a Unix socket, which Windows has too (since Windows 10
+//! 1803), if not in std.
 
 use std::io::{BufRead as _, BufReader, Write as _};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
+
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 use crate::tray::TrayCommand;
 
@@ -15,6 +21,7 @@ pub enum Instance {
     Secondary,
 }
 
+#[cfg(unix)]
 fn socket_path() -> PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -23,6 +30,12 @@ fn socket_path() -> PathBuf {
     // SAFETY: getuid has no preconditions.
     let uid = unsafe { libc::getuid() };
     dir.join(format!("slopp-{uid}.sock"))
+}
+
+/// In the temp folder, which is the user's own on Windows.
+#[cfg(windows)]
+fn socket_path() -> PathBuf {
+    std::env::temp_dir().join("slopp.sock")
 }
 
 /// Becomes the running instance, or hands over to the one already running.

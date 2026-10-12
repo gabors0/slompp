@@ -2,7 +2,6 @@
 //! when missing), the localhost certificate and the MariaDB data directory.
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context as _, bail};
 
@@ -129,10 +128,11 @@ pub fn init_mysql(layout: &Layout, mariadb: &MariaDb) -> anyhow::Result<()> {
         bail!("mariadb-install-db was not found, so the database can't be created");
     };
     // mariadb-install-db is a shell script that splits its paths on spaces.
-    if layout
-        .root()
-        .to_string_lossy()
-        .contains(char::is_whitespace)
+    if cfg!(unix)
+        && layout
+            .root()
+            .to_string_lossy()
+            .contains(char::is_whitespace)
     {
         bail!(
             "MariaDB can't create its database under {}: the path contains a space. \
@@ -141,13 +141,21 @@ pub fn init_mysql(layout: &Layout, mariadb: &MariaDb) -> anyhow::Result<()> {
         );
     }
     std::fs::create_dir_all(layout.mysql_data())?;
-    let mut cmd = Command::new(install_db);
-    cmd.arg(format!("--defaults-file={}", layout.my_cnf().display()))
-        .arg(format!("--datadir={}", layout.mysql_data().display()))
-        .arg("--auth-root-authentication-method=normal")
-        .arg("--skip-test-db");
-    if let Some(basedir) = &mariadb.basedir {
-        cmd.arg(format!("--basedir={}", basedir.display()));
+    let datadir = format!("--datadir={}", layout.mysql_data().display());
+    let mut cmd = crate::process::command(install_db);
+    if cfg!(windows) {
+        // A program of its own there, with fewer options: there's no test
+        // database, and root gets no password unless one is given. It leaves
+        // a my.ini in the data directory, which goes unused.
+        cmd.arg(datadir);
+    } else {
+        cmd.arg(format!("--defaults-file={}", layout.my_cnf().display()))
+            .arg(datadir)
+            .arg("--auth-root-authentication-method=normal")
+            .arg("--skip-test-db");
+        if let Some(basedir) = &mariadb.basedir {
+            cmd.arg(format!("--basedir={}", basedir.display()));
+        }
     }
     let out = cmd
         .output()

@@ -1,8 +1,11 @@
 //! SLOPP: an XAMPP-style control panel for Apache, PHP, MariaDB and
 //! phpMyAdmin, built with GPUI.
 
+// No console window next to the panel on Windows; debug builds keep one for
+// the log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod controller;
-#[cfg(unix)]
 mod instance;
 mod log;
 #[cfg(target_os = "macos")]
@@ -30,7 +33,6 @@ fn main() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let (commands, inbox) = async_channel::unbounded::<TrayCommand>();
-    #[cfg(unix)]
     match instance::claim() {
         Ok(instance::Instance::Secondary) => {
             println!("SLOPP is already running; showing its window.");
@@ -80,7 +82,6 @@ fn main() {
             }
         })
         .detach();
-        #[cfg(unix)]
         cx.on_app_quit(|_| async { instance::release() }).detach();
 
         if std::env::var_os("SLOPP_HIDDEN").is_none() {

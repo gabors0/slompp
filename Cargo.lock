@@ -6300,6 +6300,7 @@ dependencies = [
  "slopp-core",
  "tracing",
  "tracing-subscriber",
+ "uds_windows",
 ]
 
 [[package]]
@@ -6308,6 +6309,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "dunce",
  "getrandom 0.3.4",
  "libc",
  "rcgen",
@@ -6318,6 +6320,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "ureq",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

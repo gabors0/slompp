@@ -3,7 +3,6 @@
 //! rest are looked up on `PATH` and in the usual system locations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::settings::Binaries;
 
@@ -29,6 +28,8 @@ impl Httpd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PhpHandler {
     /// `libphp.so` loaded into Apache (XAMPP's way; needs the prefork MPM).
+    /// On Windows `php8apache2_4.dll` from PHP's Thread Safe build, in PHP's
+    /// own folder.
     Module(PathBuf),
     /// A PHP-FPM pool Apache talks to over a socket.
     Fpm(PathBuf),
@@ -118,6 +119,10 @@ fn detect_httpd(overrides: &Binaries) -> Option<Httpd> {
     if let Some(root) = &httpd_root {
         mime.push(PathBuf::from(root).join("conf/mime.types"));
     }
+    // Apache for Windows is unpacked anywhere, whatever it was built for.
+    if let Some(prefix) = bin.parent().and_then(Path::parent) {
+        mime.push(prefix.join("conf/mime.types"));
+    }
     mime.push("/etc/mime.types".into());
     mime.push("/etc/apache2/mime.types".into());
     let mime_types = mime.into_iter().find(|p| p.is_file());
@@ -146,6 +151,12 @@ fn detect_php(overrides: &Binaries, httpd: Option<&Httpd>) -> Option<Php> {
     // Prefer libphp.so when one sits next to the PHP we found, like XAMPP.
     let mut libphp = Vec::new();
     for bin in [fpm.clone(), find_program(&["php"])].into_iter().flatten() {
+        if cfg!(windows)
+            && let Some(dir) = bin.parent()
+        {
+            libphp.push(dir.join("php8apache2_4.dll"));
+            libphp.push(dir.join("php7apache2_4.dll"));
+        }
         if let Some(prefix) = bin.parent().and_then(Path::parent) {
             libphp.push(prefix.join("modules/libphp.so"));
             libphp.push(prefix.join("lib/apache2/modules/libphp.so"));
@@ -237,6 +248,7 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
 
 /// Directories searched after `PATH`: system binaries that are often missing
 /// from a user's `PATH` (Debian keeps `apache2` and `mariadbd` in sbin).
+#[cfg(unix)]
 const SYSTEM_DIRS: &[&str] = &["/usr/sbin", "/usr/local/sbin", "/sbin"];
 
 /// Where Fedora and RHEL install `mariadbd`, off every `PATH`. Searched only
@@ -269,13 +281,71 @@ fn search_dirs() -> Vec<PathBuf> {
         dirs.extend(SYSTEM_DIRS.iter().map(PathBuf::from));
         dirs
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     {
-        if cfg!(unix) {
-            dirs.extend(SYSTEM_DIRS.iter().map(PathBuf::from));
-        }
+        dirs.extend(windows_dirs());
         dirs
     }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        dirs.extend(SYSTEM_DIRS.iter().map(PathBuf::from));
+        dirs
+    }
+}
+
+/// Where the servers go on Windows, which has no common prefix for them:
+/// Apache Lounge's and PHP's zips unpacked as their instructions say,
+/// Chocolatey's packages, MariaDB's installer and XAMPP's own copies.
+#[cfg(windows)]
+fn windows_dirs() -> Vec<PathBuf> {
+    let mut drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+    drive.push("\\");
+    let drive = PathBuf::from(drive);
+    let program_files = std::env::var_os("ProgramFiles")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| drive.join("Program Files"));
+    let mut dirs = vec![drive.join("Apache24\\bin")];
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        dirs.push(Path::new(&appdata).join("Apache24\\bin"));
+    }
+    dirs.push(drive.join("php"));
+    dirs.extend(versioned_dirs(&drive.join("tools"), "php"));
+    dirs.extend(versioned_dirs(&drive, "php"));
+    dirs.extend(
+        versioned_dirs(&program_files, "MariaDB")
+            .into_iter()
+            .map(|d| d.join("bin")),
+    );
+    let xampp = drive.join("xampp");
+    dirs.extend(["apache\\bin", "php", "mysql\\bin"].map(|d| xampp.join(d)));
+    dirs
+}
+
+/// The folders in `parent` whose names start with `prefix` (any case),
+/// newest version first: `MariaDB 11.8` before `MariaDB 10.11`.
+#[cfg(any(windows, test))]
+fn versioned_dirs(parent: &Path, prefix: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(Vec<u32>, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let rest = name
+                .get(..prefix.len())?
+                .eq_ignore_ascii_case(prefix)
+                .then(|| &name[prefix.len()..])?;
+            let version = rest
+                .split(|c: char| !c.is_ascii_digit())
+                .filter_map(|part| part.parse().ok())
+                .collect();
+            Some((version, e.path()))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, dir)| dir).collect()
 }
 
 /// `bin` and `sbin` of the Homebrew formulae we use that aren't linked into
@@ -333,13 +403,42 @@ pub fn find_program(names: &[&str]) -> Option<PathBuf> {
         .find_map(|name| dirs.iter().find_map(|dir| find_in(dir, &[name])))
 }
 
-/// The first of `names` in `dir`, resolved through symlinks.
+/// The first of `names` in `dir`, resolved through symlinks (and Scoop's
+/// shims, which stand in for programs installed elsewhere).
 fn find_in(dir: &Path, names: &[&str]) -> Option<PathBuf> {
     names
         .iter()
         .map(|name| dir.join(exe(name)))
         .find(|p| is_executable(p))
-        .map(|p| p.canonicalize().unwrap_or(p))
+        .map(|p| shim_target(&p).unwrap_or_else(|| real_path(&p)))
+}
+
+/// `path` with symlinks resolved. On Windows without the `\\?\` prefix,
+/// which neither Apache's config nor most programs understand.
+fn real_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let real = dunce::canonicalize(path);
+    #[cfg(not(windows))]
+    let real = path.canonicalize();
+    real.unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The program a Scoop shim (`httpd.exe` beside `httpd.shim`) runs: Apache's
+/// modules and PHP's DLLs are found beside it, not beside the shim.
+fn shim_target(program: &Path) -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let text = std::fs::read_to_string(program.with_extension("shim")).ok()?;
+    parse_shim(&text).filter(|p| p.is_file())
+}
+
+/// `path = "C:\...\httpd.exe"` in a `.shim` file.
+fn parse_shim(text: &str) -> Option<PathBuf> {
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "path").then(|| PathBuf::from(value.trim().trim_matches('"')))
+    })
 }
 
 /// A program whose name starts with `prefix` (`php-fpm8.2`), newest first.
@@ -374,7 +473,7 @@ fn is_executable(path: &Path) -> bool {
 
 /// Runs a program briefly and returns stdout and stderr together.
 fn run_capture(bin: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new(bin).args(args).output().ok()?;
+    let out = crate::process::command(bin).args(args).output().ok()?;
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
     Some(text)
@@ -472,6 +571,38 @@ Server MPM:     event
         assert!(loads_third_party_modules(Path::new(
             "/opt/homebrew/Cellar/httpd/2.4.69/bin/httpd"
         )));
+    }
+
+    #[test]
+    fn reads_scoop_shims() {
+        assert_eq!(
+            parse_shim("path = \"C:\\Users\\me\\scoop\\apps\\php\\current\\php.exe\"\nargs = -n\n"),
+            Some(PathBuf::from(r"C:\Users\me\scoop\apps\php\current\php.exe"))
+        );
+        assert_eq!(parse_shim("args = -n\n"), None);
+    }
+
+    #[test]
+    fn orders_versioned_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "MariaDB 10.11",
+            "MariaDB 11.8",
+            "mariadb 11.4",
+            "MySQL",
+            "php84",
+        ] {
+            std::fs::create_dir_all(dir.path().join(name)).unwrap();
+        }
+        std::fs::write(dir.path().join("MariaDB 12.0"), "").unwrap();
+        assert_eq!(
+            versioned_dirs(dir.path(), "MariaDB"),
+            ["MariaDB 11.8", "mariadb 11.4", "MariaDB 10.11"].map(|n| dir.path().join(n))
+        );
+        assert_eq!(
+            versioned_dirs(dir.path(), "php"),
+            [dir.path().join("php84")]
+        );
     }
 
     #[test]
