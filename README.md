@@ -5,8 +5,7 @@
     </td>
     <td>
       <h1>SLOPP</h1>
-      An XAMPP-style local web stack with a control panel written in Rust on
-[GPUI](https://gpui-kit.com). 
+      An XAMPP-style local web stack with a control panel written in Rust on <a href="https://gpui-kit.com">GPUI</a>.
     </td>
   </tr>
 </table>
