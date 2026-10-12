@@ -203,7 +203,8 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
     let server = overrides
         .mariadbd
         .clone()
-        .or_else(|| find_program(&["mariadbd", "mysqld"]))?;
+        .or_else(|| find_program(&["mariadbd", "mysqld"]))
+        .or_else(|| find_in(Path::new(LIBEXEC_DIR), &["mariadbd", "mysqld"]))?;
     let near = |names: &[&str]| -> Option<PathBuf> {
         let dir = server.parent()?;
         names.iter().map(|n| dir.join(exe(n))).find(|p| p.is_file())
@@ -237,6 +238,10 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
 /// Directories searched after `PATH`: system binaries that are often missing
 /// from a user's `PATH` (Debian keeps `apache2` and `mariadbd` in sbin).
 const SYSTEM_DIRS: &[&str] = &["/usr/sbin", "/usr/local/sbin", "/sbin"];
+
+/// Where Fedora and RHEL install `mariadbd`, off every `PATH`. Searched only
+/// for the server, after `PATH` and [`SYSTEM_DIRS`].
+const LIBEXEC_DIR: &str = "/usr/libexec";
 
 /// Where Homebrew (Apple silicon, Intel) and MacPorts install.
 #[cfg(target_os = "macos")]
@@ -323,12 +328,18 @@ fn exe(name: &str) -> String {
 /// The first of `names` found on `PATH`, resolved through symlinks.
 pub fn find_program(names: &[&str]) -> Option<PathBuf> {
     let dirs = search_dirs();
-    names.iter().find_map(|name| {
-        dirs.iter()
-            .map(|dir| dir.join(exe(name)))
-            .find(|p| is_executable(p))
-            .map(|p| p.canonicalize().unwrap_or(p))
-    })
+    names
+        .iter()
+        .find_map(|name| dirs.iter().find_map(|dir| find_in(dir, &[name])))
+}
+
+/// The first of `names` in `dir`, resolved through symlinks.
+fn find_in(dir: &Path, names: &[&str]) -> Option<PathBuf> {
+    names
+        .iter()
+        .map(|name| dir.join(exe(name)))
+        .find(|p| is_executable(p))
+        .map(|p| p.canonicalize().unwrap_or(p))
 }
 
 /// A program whose name starts with `prefix` (`php-fpm8.2`), newest first.
@@ -485,5 +496,29 @@ Server MPM:     event
             parse_mariadb_version("mysqld  Ver 8.0.36 for Linux on x86_64 (MySQL)").as_deref(),
             Some("8.0.36")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_executables_in_a_dir() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let make = |name: &str, mode: u32| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        assert_eq!(find_in(dir.path(), &["mariadbd", "mysqld"]), None);
+
+        make("mariadbd", 0o644);
+        assert_eq!(find_in(dir.path(), &["mariadbd", "mysqld"]), None);
+
+        // Fedora's /usr/libexec/mysqld is a symlink to mariadbd.
+        make("mariadbd", 0o755);
+        std::os::unix::fs::symlink("mariadbd", dir.path().join("mysqld")).unwrap();
+        let real = dir.path().join("mariadbd").canonicalize().unwrap();
+        assert_eq!(find_in(dir.path(), &["mysqld"]), Some(real.clone()));
+        assert_eq!(find_in(dir.path(), &["mariadbd", "mysqld"]), Some(real));
     }
 }
