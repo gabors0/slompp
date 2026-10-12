@@ -1,6 +1,6 @@
 //! User settings: ports, where the stack root is, binary overrides, the
-//! editor and terminal to open things with, and which modules start with the
-//! panel. Saved as JSON in the config directory.
+//! editor and terminal to open things with, which modules start with the
+//! panel, and the panel's appearance. Saved as JSON in the config directory.
 
 use std::path::{Path, PathBuf};
 
@@ -74,6 +74,29 @@ pub struct Binaries {
     pub mariadb_client: Option<PathBuf>,
 }
 
+/// The panel's colour scheme.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    /// Follows the system's light or dark mode.
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Dark, Appearance::Light];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Appearance::System => "System",
+            Appearance::Dark => "Dark",
+            Appearance::Light => "Light",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -93,6 +116,7 @@ pub struct Settings {
     pub stop_on_exit: bool,
     /// Keep running in the system tray when the window closes.
     pub close_to_tray: bool,
+    pub appearance: Appearance,
 }
 
 impl Default for Settings {
@@ -106,6 +130,7 @@ impl Default for Settings {
             autostart: Vec::new(),
             stop_on_exit: false,
             close_to_tray: true,
+            appearance: Appearance::System,
         }
     }
 }
@@ -167,6 +192,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.ports.mysql = 3307;
         settings.autostart = vec![Module::MySql];
+        settings.appearance = Appearance::Light;
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
 
@@ -175,5 +201,9 @@ mod tests {
         assert_eq!(partial.ports.http, 81);
         assert_eq!(partial.ports.mysql, 3306);
         assert!(partial.close_to_tray, "missing fields take the defaults");
+        assert_eq!(partial.appearance, Appearance::System);
+
+        std::fs::write(&path, r#"{"appearance":"dark"}"#).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().appearance, Appearance::Dark);
     }
 }

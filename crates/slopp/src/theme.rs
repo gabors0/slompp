@@ -1,12 +1,14 @@
-//! SLOPP's look: a server rack. Steel-blue chassis, module faces a step
-//! lighter, and status lamps as the one source of colour. XAMPP orange marks
-//! the brand and the main action, nothing else.
+//! SLOPP's look: a server rack in Ayu's colours (Ayu Dark and Ayu Light, as
+//! published in the `ayu` package, 9.1). Module faces are Ayu's panels, the
+//! console and inputs its sunk surface, and status lamps the one source of
+//! colour. Ayu's orange stands in for XAMPP's and marks the brand and the
+//! main action, nothing else.
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Hsla, Rgba, hsla, px, rgb};
+use gpui_kit::{App, Hsla, Rgba, px, rgb};
 
 pub const FONT: &str = "IBM Plex Sans";
 pub const MONO: &str = "IBM Plex Mono";
@@ -76,49 +78,70 @@ impl MarkInk {
     }
 }
 
+/// Ayu's colours. Where Ayu has no token for a role, the value is a mix of
+/// two of its tokens, as noted.
 pub struct Palette;
 
 impl Palette {
-    /// The chassis: window background.
+    /// The chassis: window background (`ui.bg`).
     pub fn bg() -> Rgba {
-        pick(rgb(0x181C25), rgb(0xE8EBF0))
+        pick(rgb(0x0D1017), rgb(0xF8F9FA))
     }
-    /// A module's face plate and other raised surfaces.
+    /// A module's face plate and other raised surfaces (`ui.panel.bg` in
+    /// dark, `ui.popup.bg` in light, where the panel is all but the
+    /// background's colour).
     pub fn face() -> Rgba {
-        pick(rgb(0x20252F), rgb(0xFFFFFF))
+        pick(rgb(0x141821), rgb(0xFFFFFF))
     }
-    /// Recessed areas: the console, inputs.
+    /// Recessed areas: the console, inputs (`surface.sunk`).
     pub fn well() -> Rgba {
-        pick(rgb(0x12151C), rgb(0xF4F6F9))
+        pick(rgb(0x010102), rgb(0xEBEEF0))
     }
+    /// `ui.line`; light's is translucent, here over `ui.bg`.
     pub fn border() -> Rgba {
-        pick(rgb(0x2D3341), rgb(0xD2D7E0))
+        pick(rgb(0x1B1F29), rgb(0xE7EAED))
     }
+    /// Controls that are off, such as a switch's track (`palette.gray`).
+    pub fn control() -> Rgba {
+        pick(rgb(0x404953), rgb(0xC5C5C8))
+    }
+    /// `editor.fg`.
     pub fn text() -> Rgba {
-        pick(rgb(0xE6E9EF), rgb(0x1A1F2A))
+        pick(rgb(0xBFBDB6), rgb(0x5C6166))
     }
+    /// Halfway between `editor.fg` and `ui.fg`.
     pub fn text_secondary() -> Rgba {
-        pick(rgb(0x9BA3B3), rgb(0x4E5767))
+        pick(rgb(0x8C9097), rgb(0x6F7882))
     }
+    /// `ui.fg`.
     pub fn text_tertiary() -> Rgba {
-        pick(rgb(0x687084), rgb(0x868E9E))
+        pick(rgb(0x5A6378), rgb(0x828E9F))
     }
-    /// XAMPP orange.
+    /// Ayu's orange (`syntax.keyword`), in place of XAMPP's.
     pub fn accent() -> Rgba {
-        pick(rgb(0xF07B2C), rgb(0xD45F17))
+        pick(rgb(0xFF8F40), rgb(0xFA8532))
+    }
+    /// Text on the accent: dark in both schemes, as white on Ayu's orange
+    /// is too faint to read.
+    pub fn on_accent() -> Rgba {
+        rgb(0x0D1017)
     }
     /// The mark's colours for the window's appearance.
     pub fn mark() -> &'static MarkInk {
         pick(&MarkInk::WHITE, &MarkInk::BLACK)
     }
+    /// `syntax.string`; light uses green's darkest step, to stay readable
+    /// as text.
     pub fn ok() -> Rgba {
-        pick(rgb(0x4CC38A), rgb(0x1F8F58))
+        pick(rgb(0xAAD94C), rgb(0x719700))
     }
+    /// `syntax.func`; light uses yellow's darkest step.
     pub fn busy() -> Rgba {
-        pick(rgb(0xE9B44C), rgb(0xB07A12))
+        pick(rgb(0xFFB454), rgb(0xB37C00))
     }
+    /// `common.error`.
     pub fn fault() -> Rgba {
-        pick(rgb(0xEF6458), rgb(0xC5372B))
+        pick(rgb(0xD95757), rgb(0xE65050))
     }
 
     pub fn lamp(lamp: Lamp) -> Hsla {
@@ -186,7 +209,7 @@ pub fn apply(light: bool, cx: &mut App) {
         c.primary = accent;
         c.primary_hover = accent.blend(Hsla::white().opacity(0.1));
         c.primary_active = accent.blend(Hsla::black().opacity(0.12));
-        c.primary_foreground = hsla(0., 0., 1., 1.);
+        c.primary_foreground = Palette::on_accent().into();
         c.button_primary = c.primary;
         c.button_primary_hover = c.primary_hover;
         c.button_primary_active = c.primary_active;
@@ -208,7 +231,7 @@ pub fn apply(light: bool, cx: &mut App) {
         c.accent_foreground = Palette::text().into();
         c.title_bar = Palette::bg().into();
         c.title_bar_border = Palette::border().into();
-        c.switch = Palette::border().into();
+        c.switch = Palette::control().into();
         c.success = Palette::ok().into();
         c.danger = Palette::fault().into();
         c.warning = Palette::busy().into();

@@ -124,7 +124,7 @@ fn show_panel(cx: &mut App) {
         ..TitleBar::window_options()
     };
     match gpui_kit::open_window(options, cx, |window, cx| {
-        theme::apply(panel::wants_light(window.appearance()), cx);
+        panel::apply_theme(window, cx);
         cx.new(|cx| panel::Panel::new(window, cx))
     }) {
         Ok((window, _)) => {

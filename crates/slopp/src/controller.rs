@@ -247,7 +247,7 @@ impl Controller {
                 .into_iter()
                 .filter(|&tool| self.stack.db_admin_url(tool).is_some())
                 .collect(),
-            light_panel: tray::light_panel(panel::wants_light(cx.window_appearance())),
+            light_panel: tray::light_panel(panel::system_light(cx.window_appearance())),
         }
     }
 
