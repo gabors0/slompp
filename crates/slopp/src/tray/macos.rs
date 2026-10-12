@@ -17,13 +17,16 @@ use objc2_app_kit::{
 use objc2_foundation::{NSObject, NSObjectProtocol, NSSize, NSString};
 use slopp_core::Module;
 
-use super::{MenuEntry, TrayCommand, TrayState, icon};
+use super::{MenuEntry, MenuIcon, TrayCommand, TrayState, icon};
 use crate::theme::Lamp;
 
 /// The menu bar is 22 points high; icons in it are 18.
 const ICON_POINTS: f64 = 18.0;
 /// Rendered at twice that for Retina displays.
 const ICON_PIXELS: i32 = 36;
+/// A menu item's lamp, the size of the symbols beside it.
+const LAMP_POINTS: f64 = 16.0;
+const LAMP_PIXELS: i32 = 32;
 
 struct Ivars {
     commands: async_channel::Sender<TrayCommand>,
@@ -93,6 +96,7 @@ impl TrayHandle {
         for entry in state.menu() {
             let MenuEntry::Item {
                 label,
+                icon,
                 enabled,
                 command,
             } = entry
@@ -115,6 +119,7 @@ impl TrayHandle {
             unsafe { item.setTarget(Some(target)) };
             item.setTag(actions.len() as isize);
             item.setEnabled(enabled);
+            item.setImage(menu_image(icon, state.light_panel).as_deref());
             self.menu.addItem(&item);
             actions.push(command);
         }
@@ -161,7 +166,31 @@ fn image(state: &TrayState) -> Option<Retained<NSImage>> {
     } else {
         icon::Ink::for_panel(state.light_panel)
     };
-    let pixmap = icon::render(ICON_PIXELS, apache, mysql, ink);
+    let image = bitmap(&icon::render(ICON_PIXELS, apache, mysql, ink), ICON_POINTS)?;
+    image.setTemplate(template);
+    Some(image)
+}
+
+/// What a menu item shows before its label: the module's lamp in colour, or
+/// an SF Symbol, which AppKit tints like the label.
+fn menu_image(icon: MenuIcon, light_menu: bool) -> Option<Retained<NSImage>> {
+    let symbol = match icon {
+        MenuIcon::Lamp(lamp) => {
+            let ink = icon::Ink::for_panel(light_menu);
+            return bitmap(&icon::lamp(LAMP_PIXELS, lamp, ink), LAMP_POINTS);
+        }
+        MenuIcon::Start => "play.fill",
+        MenuIcon::Stop => "stop.fill",
+        MenuIcon::Site => "globe",
+        MenuIcon::Database => "cylinder.split.1x2",
+        MenuIcon::Panel => "macwindow",
+        MenuIcon::Quit => "power",
+    };
+    NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(symbol), None)
+}
+
+/// An image of `points`×`points` from a pixmap.
+fn bitmap(pixmap: &icon::Pixmap, points: f64) -> Option<Retained<NSImage>> {
     let (width, height) = (pixmap.width as isize, pixmap.height as isize);
     // SAFETY: null planes make the representation allocate its own buffer.
     let rep = unsafe {
@@ -194,10 +223,9 @@ fn image(state: &TrayState) -> Option<Retained<NSImage>> {
         let premultiply = |c: u8| (u16::from(c) * u16::from(a) / 255) as u8;
         *dst = [premultiply(r), premultiply(g), premultiply(b), a];
     }
-    let size = NSSize::new(ICON_POINTS, ICON_POINTS);
+    let size = NSSize::new(points, points);
     rep.setSize(size);
     let image = NSImage::initWithSize(NSImage::alloc(), size);
     image.addRepresentation(&rep);
-    image.setTemplate(template);
     Some(image)
 }
