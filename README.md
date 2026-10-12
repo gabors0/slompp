@@ -17,6 +17,19 @@ stop each module, see its ports and PIDs, open its config and log files, open
 the site or phpMyAdmin, and spot port conflicts before they bite. The servers
 keep running when the panel closes (unless you change that in Settings).
 
+## Tray icon
+
+On Linux SLOMPP puts an icon in the system tray (StatusNotifierItem, shown by
+KDE Plasma and most panels; GNOME needs the AppIndicator extension). Its top
+lamp is Apache, the middle one MySQL. The menu starts and stops modules and
+opens the site or phpMyAdmin; a left click shows the panel.
+
+With a tray, closing the window keeps SLOMPP running there (Settings →
+Startup turns that off); without one, closing the window quits. Launching
+SLOMPP again while it runs brings its window back instead of starting a
+second copy. `SLOMPP_HIDDEN=1 slompp` starts it in the tray only, e.g. for
+login autostart.
+
 ## Running it
 
 On NixOS / with Nix:
@@ -82,7 +95,7 @@ slomppctl install-phpmyadmin
   stack's config (`setup`, `templates`), starts/stops/watches the servers
   (`stack`, `process`), lists listening ports (`net`), installs phpMyAdmin,
   and the `slomppctl` binary.
-- `crates/slompp`: the GPUI panel.
+- `crates/slompp`: the GPUI panel and the tray icon.
 
 Settings are stored in `~/.config/slompp/settings.json`.
 

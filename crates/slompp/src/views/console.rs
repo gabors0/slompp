@@ -5,12 +5,13 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, Hsla, div, px};
 
+use crate::controller::Controller;
 use crate::log::Kind;
-use crate::panel::Panel;
+use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Palette};
 
-pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
-    let lines = panel.log.entries().iter().map(|entry| {
+pub fn render(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let lines = ctl.log.entries().iter().map(|entry| {
         let tone: Hsla = match entry.kind {
             Kind::Info => Palette::text().into(),
             Kind::Ok => Palette::ok().into(),
@@ -73,7 +74,7 @@ pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
                         .xsmall()
                         .ghost()
                         .label("Clear")
-                        .on_click(cx.listener(|this, _, _, cx| this.clear_log(cx))),
+                        .on_click(on_controller(cx, |c, cx| c.clear_log(cx))),
                 ),
         )
         .child(

@@ -8,18 +8,17 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, Context, FontWeight, Hsla, SharedString, Window, div,
-    px,
+    Animation, AnimationExt as _, AnyElement, Context, FontWeight, Hsla, SharedString, div, px,
 };
 use slompp_core::{Module, Problem, phpmyadmin};
 
-use crate::panel::{Panel, PmaState, Row};
+use crate::controller::{Controller, PmaState, Row};
+use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Lamp, Palette};
 
 const UNIT_HEIGHT: f32 = 76.;
 
-pub fn render(panel: &Panel, window: &mut Window, cx: &mut Context<Panel>) -> impl IntoElement {
-    let _ = window;
+pub fn render(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
     let mut rack = v_flex()
         .flex_none()
         .rounded(px(8.))
@@ -27,24 +26,24 @@ pub fn render(panel: &Panel, window: &mut Window, cx: &mut Context<Panel>) -> im
         .border_color(Palette::border())
         .bg(Palette::face())
         .overflow_hidden();
-    let last = panel.rows.len().saturating_sub(1);
-    for (i, row) in panel.rows.iter().enumerate() {
-        rack = rack.child(render_unit(panel, row, i == 0, i == last, cx));
+    let last = ctl.rows.len().saturating_sub(1);
+    for (i, row) in ctl.rows.iter().enumerate() {
+        rack = rack.child(render_unit(ctl, row, i == 0, i == last, cx));
     }
     rack
 }
 
 fn render_unit(
-    panel: &Panel,
+    ctl: &Controller,
     row: &Row,
     first: bool,
     last: bool,
-    cx: &mut Context<Panel>,
+    cx: &Context<Panel>,
 ) -> AnyElement {
     let m = row.module;
     let lamp = row.lamp();
     let color = Palette::lamp(lamp);
-    let stack = panel.stack();
+    let stack = ctl.stack();
     let describe = stack
         .describe(m)
         .unwrap_or_else(|| "Not installed".to_string());
@@ -93,13 +92,13 @@ fn render_unit(
                             .child(describe),
                     ),
             )
-            .child(render_ports(panel, row))
+            .child(render_ports(ctl, row))
             .child(render_pids(row))
             .child(div().flex_1())
-            .child(render_actions(panel, row, missing, cx)),
+            .child(render_actions(ctl, row, missing, cx)),
     );
 
-    let notes = notes(panel, row);
+    let notes = notes(ctl, row);
     let content = v_flex()
         .flex_1()
         .child(face)
@@ -216,8 +215,8 @@ fn reading(label: &'static str, value: impl Into<SharedString>, live: bool) -> i
         )
 }
 
-fn render_ports(panel: &Panel, row: &Row) -> impl IntoElement {
-    let stack = panel.stack();
+fn render_ports(ctl: &Controller, row: &Row) -> impl IntoElement {
+    let stack = ctl.stack();
     let mut ports = h_flex().w(px(150.)).gap_5();
     for (port, label) in stack.ports(row.module) {
         let open = row
@@ -253,14 +252,14 @@ fn render_pids(row: &Row) -> impl IntoElement {
 }
 
 fn render_actions(
-    panel: &Panel,
+    ctl: &Controller,
     row: &Row,
     missing: bool,
-    cx: &mut Context<Panel>,
+    cx: &Context<Panel>,
 ) -> impl IntoElement {
     let m = row.module;
     let running = row.running();
-    let stack = panel.stack();
+    let stack = ctl.stack();
     let id = m.id();
 
     let toggle = Button::new(SharedString::from(format!("toggle-{id}")))
@@ -269,7 +268,7 @@ fn render_actions(
         .label(if running { "Stop" } else { "Start" })
         .loading(row.busy())
         .disabled(row.busy() || (missing && !running))
-        .on_click(cx.listener(move |this, _, _, cx| this.toggle(m, cx)));
+        .on_click(on_controller(cx, move |c, cx| c.toggle(m, cx)));
     let toggle = if running {
         toggle.outline()
     } else {
@@ -278,7 +277,7 @@ fn render_actions(
 
     let admin: AnyElement = match m {
         Module::MySql if !phpmyadmin::installed(stack.layout()) => {
-            let installing = matches!(panel.pma, PmaState::Installing(_));
+            let installing = matches!(ctl.pma, PmaState::Installing(_));
             Button::new("install-pma")
                 .small()
                 .ghost()
@@ -286,7 +285,7 @@ fn render_actions(
                 .tooltip("Download phpMyAdmin from phpmyadmin.net")
                 .loading(installing)
                 .disabled(installing)
-                .on_click(cx.listener(|this, _, window, cx| this.install_phpmyadmin(window, cx)))
+                .on_click(on_controller(cx, |c, cx| c.install_phpmyadmin(cx)))
                 .into_any_element()
         }
         _ => Button::new(SharedString::from(format!("admin-{id}")))
@@ -297,14 +296,12 @@ fn render_actions(
                 Module::Apache => "Open the site in your browser",
                 Module::MySql => "Open phpMyAdmin",
             })
-            .disabled(!panel.row(Module::Apache).running() || (m == Module::MySql && !running))
-            .on_click(cx.listener(move |this, _, _, cx| this.open_admin(m, cx)))
+            .disabled(!ctl.row(Module::Apache).running() || (m == Module::MySql && !running))
+            .on_click(on_controller(cx, move |c, cx| c.open_admin(m, cx)))
             .into_any_element(),
     };
 
-    let panel_entity = cx.entity().downgrade();
     let files_menu = |kind: &'static str, files: Vec<slompp_core::stack::NamedFile>| {
-        let panel_entity = panel_entity.clone();
         Button::new(SharedString::from(format!("{kind}-{id}")))
             .small()
             .ghost()
@@ -314,13 +311,10 @@ fn render_actions(
                 for file in &files {
                     let path = file.path.clone();
                     let exists = path.exists();
-                    let panel_entity = panel_entity.clone();
                     menu = menu.item(PopupMenuItem::new(file.label).disabled(!exists).on_click(
                         move |_, _, cx| {
                             let path = path.clone();
-                            panel_entity
-                                .update(cx, |panel, cx| panel.open_file(path, cx))
-                                .ok();
+                            Controller::global(cx).update(cx, |c, cx| c.open_file(path, cx));
                         },
                     ));
                 }
@@ -338,14 +332,14 @@ fn render_actions(
 }
 
 /// Lines under a unit: why it can't start, and phpMyAdmin's progress.
-fn notes(panel: &Panel, row: &Row) -> Vec<(String, Hsla)> {
+fn notes(ctl: &Controller, row: &Row) -> Vec<(String, Hsla)> {
     let mut notes: Vec<(String, Hsla)> = row
         .problems
         .iter()
         .map(|p| (p.to_string(), Palette::fault().into()))
         .collect();
     if row.module == Module::MySql
-        && let PmaState::Installing(text) = &panel.pma
+        && let PmaState::Installing(text) = &ctl.pma
     {
         notes.push((
             format!("phpMyAdmin: {text}"),
@@ -356,9 +350,9 @@ fn notes(panel: &Panel, row: &Row) -> Vec<(String, Hsla)> {
 }
 
 /// Under the rack: where the stack lives, and the folder and shell buttons.
-pub fn render_stack_bar(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
-    let root = panel.stack().layout().root().display().to_string();
-    let htdocs = panel.stack().layout().htdocs();
+pub fn render_stack_bar(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let root = ctl.stack().layout().root().display().to_string();
+    let htdocs = ctl.stack().layout().htdocs();
     h_flex()
         .flex_none()
         .px_1()
@@ -384,7 +378,9 @@ pub fn render_stack_bar(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElem
                 .ghost()
                 .label("htdocs")
                 .tooltip("Open the web root, where your projects go")
-                .on_click(cx.listener(move |this, _, _, cx| this.open_folder(htdocs.clone(), cx))),
+                .on_click(on_controller(cx, move |c, cx| {
+                    c.open_folder(htdocs.clone(), cx)
+                })),
         )
         .child(
             Button::new("open-root")
@@ -392,7 +388,7 @@ pub fn render_stack_bar(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElem
                 .ghost()
                 .label("Folder")
                 .tooltip("Open the stack folder")
-                .on_click(cx.listener(|this, _, _, cx| this.open_root(cx))),
+                .on_click(on_controller(cx, |c, cx| c.open_root(cx))),
         )
         .child(
             Button::new("open-shell")
@@ -400,6 +396,6 @@ pub fn render_stack_bar(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElem
                 .ghost()
                 .label("Shell")
                 .tooltip("Open a terminal with mariadb, php and httpd on PATH")
-                .on_click(cx.listener(|this, _, _, cx| this.open_shell(cx))),
+                .on_click(on_controller(cx, |c, cx| c.open_shell(cx))),
         )
 }

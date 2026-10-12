@@ -24,6 +24,12 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
     ] {
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
+    // Only this user may reach the database and PHP sockets.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(layout.sockets(), std::fs::Permissions::from_mode(0o700));
+    }
 
     write_once(&layout.httpd_conf(), &templates::httpd_conf(layout))?;
     write_once(

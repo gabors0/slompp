@@ -74,7 +74,7 @@ pub struct Binaries {
     pub mariadb_client: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// The stack root; `None` is [`crate::Layout::default_root`].
@@ -91,6 +91,23 @@ pub struct Settings {
     pub autostart: Vec<Module>,
     /// Stop running modules when the panel quits (XAMPP leaves them running).
     pub stop_on_exit: bool,
+    /// Keep running in the system tray when the window closes.
+    pub close_to_tray: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            root: None,
+            ports: Ports::default(),
+            binaries: Binaries::default(),
+            editor: None,
+            terminal: None,
+            autostart: Vec::new(),
+            stop_on_exit: false,
+            close_to_tray: true,
+        }
+    }
 }
 
 impl Settings {
@@ -156,5 +173,6 @@ mod tests {
         let partial = Settings::load(&path).unwrap();
         assert_eq!(partial.ports.http, 81);
         assert_eq!(partial.ports.mysql, 3306);
+        assert!(partial.close_to_tray, "missing fields take the defaults");
     }
 }

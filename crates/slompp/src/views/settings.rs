@@ -69,6 +69,7 @@ pub struct SettingsView {
     autostart_apache: bool,
     autostart_mysql: bool,
     stop_on_exit: bool,
+    close_to_tray: bool,
     error: Option<String>,
 }
 
@@ -151,6 +152,7 @@ impl SettingsView {
             autostart_apache: s.autostart.contains(&Module::Apache),
             autostart_mysql: s.autostart.contains(&Module::MySql),
             stop_on_exit: s.stop_on_exit,
+            close_to_tray: s.close_to_tray,
             error: None,
         }
     }
@@ -206,6 +208,7 @@ impl SettingsView {
             terminal: self.terminal.optional(cx),
             autostart,
             stop_on_exit: self.stop_on_exit,
+            close_to_tray: self.close_to_tray,
         })
     }
 
@@ -324,6 +327,13 @@ impl Render for SettingsView {
                 self.autostart_mysql,
                 cx,
                 |this, v| this.autostart_mysql = v,
+            ))
+            .child(toggle(
+                "close-to-tray",
+                "Keep SLOMPP in the system tray when its window closes",
+                self.close_to_tray,
+                cx,
+                |this, v| this.close_to_tray = v,
             ))
             .child(toggle(
                 "stop-on-exit",

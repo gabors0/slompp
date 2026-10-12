@@ -7,11 +7,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, SharedString, div, px};
 use slompp_core::Module;
 
-use crate::panel::Panel;
+use crate::controller::Controller;
+use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Palette};
 
-pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
-    let stack = panel.stack();
+pub fn render(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let stack = ctl.stack();
     // Which module each configured port belongs to.
     let ours: Vec<(u16, Module, &'static str)> = Module::ALL
         .into_iter()
@@ -36,7 +37,7 @@ pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
         .child(div().w(px(90.)).child("PID"))
         .child(div().flex_1().child("Program"));
 
-    let rows = panel.listeners.iter().enumerate().map(|(i, l)| {
+    let rows = ctl.listeners.iter().enumerate().map(|(i, l)| {
         let owner = ours.iter().find(|(port, ..)| *port == l.port());
         let unknown = || "—".to_string();
         h_flex()
@@ -100,7 +101,7 @@ pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
             )
     });
 
-    let empty = panel.listeners.is_empty();
+    let empty = ctl.listeners.is_empty();
     v_flex()
         .flex_1()
         .min_h_0()
@@ -121,7 +122,7 @@ pub fn render(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
                         .small()
                         .ghost()
                         .label("Refresh")
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_ports(cx))),
+                        .on_click(on_controller(cx, |c, cx| c.refresh_ports(cx))),
                 ),
         )
         .child(

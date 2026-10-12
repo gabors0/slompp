@@ -5,7 +5,8 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Div, FontWeight, MouseButton, div, px};
 
-use crate::panel::{Page, Panel, StartAll, StopAll};
+use crate::controller::Controller;
+use crate::panel::{Page, Panel, on_controller};
 use crate::theme::Palette;
 
 /// Three rack units, the top one with its lamp lit.
@@ -42,8 +43,8 @@ pub fn controls(element: Div) -> Div {
     element.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
-pub fn render_nav(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
-    let tab = |id: &'static str, label: &'static str, page: Page, cx: &mut Context<Panel>| {
+pub fn render_nav(panel: &Panel, cx: &Context<Panel>) -> impl IntoElement {
+    let tab = |id: &'static str, label: &'static str, page: Page, cx: &Context<Panel>| {
         let active = panel.page == page;
         div()
             .id(id)
@@ -84,23 +85,23 @@ pub fn render_nav(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
         )
 }
 
-pub fn render_global_actions(panel: &Panel, cx: &mut Context<Panel>) -> impl IntoElement {
-    let busy = panel.rows.iter().any(|r| r.busy());
+pub fn render_global_actions(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let busy = ctl.rows.iter().any(|r| r.busy());
     controls(h_flex().gap_2())
         .child(
             Button::new("start-all")
                 .label("Start all")
                 .small()
                 .outline()
-                .disabled(busy || panel.all_running())
-                .on_click(cx.listener(|this, _, window, cx| this.start_all(&StartAll, window, cx))),
+                .disabled(busy || ctl.all_running())
+                .on_click(on_controller(cx, |c, cx| c.start_all(cx))),
         )
         .child(
             Button::new("stop-all")
                 .label("Stop all")
                 .small()
                 .outline()
-                .disabled(busy || !panel.any_running())
-                .on_click(cx.listener(|this, _, window, cx| this.stop_all(&StopAll, window, cx))),
+                .disabled(busy || !ctl.any_running())
+                .on_click(on_controller(cx, |c, cx| c.stop_all(cx))),
         )
 }

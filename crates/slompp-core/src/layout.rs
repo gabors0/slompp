@@ -154,15 +154,26 @@ impl Layout {
     }
 
     /// Where Unix sockets go: `tmp/`, unless that path is too long for a
-    /// socket (108 bytes on Linux), then a short per-root directory in the
-    /// system temp dir.
+    /// socket (108 bytes on Linux), then a short per-user, per-root
+    /// directory in `/tmp`. Not `$TMPDIR`: the path ends up in config files,
+    /// so every process (panel, CLI, dev shell) must agree on it.
     pub fn sockets(&self) -> PathBuf {
         let tmp = self.tmp();
         // The longest socket name we use is `php-fpm.sock`.
         if tmp.join("php-fpm.sock").as_os_str().len() < 100 {
             return tmp;
         }
-        std::env::temp_dir().join(format!("slompp-{:08x}", fnv1a(self.root.as_os_str())))
+        let hash = fnv1a(self.root.as_os_str());
+        #[cfg(unix)]
+        {
+            // SAFETY: getuid has no preconditions.
+            let uid = unsafe { libc::getuid() };
+            PathBuf::from("/tmp").join(format!("slompp-{uid}-{hash:08x}"))
+        }
+        #[cfg(not(unix))]
+        {
+            std::env::temp_dir().join(format!("slompp-{hash:08x}"))
+        }
     }
 
     // phpMyAdmin
