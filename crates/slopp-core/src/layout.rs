@@ -147,6 +147,10 @@ impl Layout {
         self.mysql_data().join("mysql_error.log")
     }
 
+    pub fn mysql_pid_file(&self) -> PathBuf {
+        self.run().join("mysqld.pid")
+    }
+
     /// What mariadbd prints before its error log is open.
     pub fn mysql_console_log(&self) -> PathBuf {
         self.mysql().join("console.log")

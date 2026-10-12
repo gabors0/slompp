@@ -384,14 +384,28 @@ fn my_cnf_for(layout: &Layout, windows: bool) -> String {
     let data = conf_path(&layout.mysql_data());
     let socket = conf_path(&layout.mysql_socket());
     let error_log = conf_path(&layout.mysql_error_log());
-    let run = conf_path(&layout.run());
+    let pid_file = conf_path(&layout.mysql_pid_file());
     let tmp = conf_path(&layout.tmp());
+    // MariaDB before 10.11 reads this file in the Windows code page, so on
+    // Windows its paths, which may hold any letter (`C:\Users\Zalán`), go on
+    // the command line instead.
     let (client, server) = if windows {
-        ("host = 127.0.0.1".to_string(), String::new())
+        (
+            "host = 127.0.0.1".to_string(),
+            "# SLOPP passes datadir, tmpdir, log_error and pid-file on the command\n\
+             # line: older MariaDB reads this file in the Windows code page.\n"
+                .to_string(),
+        )
     } else {
         (
             format!("socket = \"{socket}\""),
-            format!("socket = \"{socket}\"\n"),
+            format!(
+                "datadir = \"{data}\"\n\
+                 socket = \"{socket}\"\n\
+                 pid-file = \"{pid_file}\"\n\
+                 tmpdir = \"{tmp}\"\n\
+                 log_error = \"{error_log}\"\n"
+            ),
         )
     };
     format!(
@@ -403,11 +417,7 @@ fn my_cnf_for(layout: &Layout, windows: bool) -> String {
 default-character-set = utf8mb4
 
 [mysqld]
-datadir = "{data}"
-{server}pid-file = "{run}/mysqld.pid"
-tmpdir = "{tmp}"
-log_error = "{error_log}"
-bind-address = 127.0.0.1
+{server}bind-address = 127.0.0.1
 skip-name-resolve
 character-set-server = utf8mb4
 collation-server = utf8mb4_general_ci
@@ -577,6 +587,7 @@ mod tests {
         let cnf = my_cnf_for(&layout, true);
         assert!(cnf.contains("[client]\nhost = 127.0.0.1\n"));
         assert!(!cnf.contains("socket"));
+        assert!(!cnf.contains("/s/"), "no paths on Windows:\n{cnf}");
         assert!(
             my_cnf_for(&layout, false).contains("[mysqld]\ndatadir = \"/s/mysql/data\"\nsocket = ")
         );

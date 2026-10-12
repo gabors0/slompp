@@ -523,8 +523,8 @@ impl Stack {
             .with_context(|| format!("running {}", httpd.bin.display()))?;
         if !check.status.success() {
             process::terminate(&procs, Duration::from_secs(5));
-            let mut text = String::from_utf8_lossy(&check.stderr).into_owned();
-            text.push_str(&String::from_utf8_lossy(&check.stdout));
+            let mut text = process::decode(&check.stderr);
+            text.push_str(&process::decode(&check.stdout));
             bail!("Apache's configuration has an error:\n{}", text.trim());
         }
 
@@ -611,6 +611,18 @@ impl Stack {
         // --defaults-file must come first.
         cmd.arg(format!("--defaults-file={}", layout.my_cnf().display()))
             .arg(format!("--port={}", self.settings.ports.mysql));
+        // MariaDB before 10.11 reads my.cnf in the Windows code page, not
+        // UTF-8, so a path with "á" in it there would point elsewhere.
+        // Windows hands arguments over in whichever the program uses.
+        if cfg!(windows) {
+            cmd.arg(format!("--datadir={}", layout.mysql_data().display()))
+                .arg(format!("--tmpdir={}", layout.tmp().display()))
+                .arg(format!(
+                    "--log-error={}",
+                    layout.mysql_error_log().display()
+                ))
+                .arg(format!("--pid-file={}", layout.mysql_pid_file().display()));
+        }
         let child = process::spawn_detached(cmd, &layout.mysql_console_log())?;
         Ok(vec![self.keep(child)])
     }
@@ -618,7 +630,7 @@ impl Stack {
 
 /// The last `n` non-empty lines of a file.
 pub fn tail_lines(path: &Path, n: usize) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = process::decode(&std::fs::read(path).ok()?);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     if lines.is_empty() {
         return None;

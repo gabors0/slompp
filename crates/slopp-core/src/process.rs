@@ -97,6 +97,21 @@ pub fn spawn_detached(mut cmd: Command, log: &Path) -> anyhow::Result<Child> {
     cmd.spawn().with_context(|| format!("starting {program}"))
 }
 
+/// A program's output or log as text. On Windows, programs that predate
+/// UTF-8 there (MariaDB before 10.11) write in the system's code page, so
+/// text that isn't UTF-8 is read in that.
+pub fn decode(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        #[cfg(windows)]
+        Err(_) => {
+            win::from_ansi(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+        }
+        #[cfg(not(windows))]
+        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
 /// A command for a helper that runs briefly (`httpd -t`, `mariadbd
 /// --version`). On Windows it gets no console window, which would otherwise
 /// flash up from the panel.
@@ -394,6 +409,27 @@ pub(crate) mod win {
         }
     }
 
+    /// `bytes` in the system's ANSI code page.
+    pub fn from_ansi(bytes: &[u8]) -> Option<String> {
+        use windows_sys::Win32::Globalization::{CP_ACP, MultiByteToWideChar};
+        let len = i32::try_from(bytes.len()).ok()?;
+        if len == 0 {
+            return Some(String::new());
+        }
+        // SAFETY: counting only; `bytes` is `len` bytes long.
+        let wide_len =
+            unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0) };
+        if wide_len <= 0 {
+            return None;
+        }
+        let mut wide = vec![0u16; wide_len as usize];
+        // SAFETY: `wide` holds the `wide_len` characters asked for above.
+        let written = unsafe {
+            MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), wide_len)
+        };
+        (written > 0).then(|| String::from_utf16_lossy(&wide[..written as usize]))
+    }
+
     pub fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
     }
@@ -483,6 +519,19 @@ mod tests {
         write_pid_file(&path, &procs).unwrap();
         assert_eq!(read_pid_file(&path), procs);
         assert!(read_pid_file(&dir.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn decodes_output_that_isnt_utf8() {
+        assert_eq!(decode("Zalán".as_bytes()), "Zalán");
+        // Older MariaDB on Windows writes in the code page: "á" is 0xE1 in
+        // the Western and Central European ones alike.
+        let ansi = decode(b"C:\\Users\\Zal\xe1n");
+        if cfg!(windows) {
+            assert_eq!(ansi, "C:\\Users\\Zalán");
+        } else {
+            assert_eq!(ansi, "C:\\Users\\Zal\u{FFFD}n");
+        }
     }
 
     #[cfg(unix)]
