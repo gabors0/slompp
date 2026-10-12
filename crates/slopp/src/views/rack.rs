@@ -1,5 +1,5 @@
-//! The module rack: one unit per server with its status rail and lamp,
-//! ports, processes and controls.
+//! The module rack: one unit per server with its LED, ports, processes and
+//! controls.
 
 use std::time::Duration;
 
@@ -17,6 +17,9 @@ use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Lamp, Palette};
 
 const UNIT_HEIGHT: f32 = 76.;
+/// The LED's bezel, and the gap from it to the module's name.
+const BEZEL_WIDTH: f32 = 18.;
+const BEZEL_GAP: f32 = 14.;
 
 pub fn render(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
     let mut rack = v_flex()
@@ -26,23 +29,15 @@ pub fn render(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
         .border_color(Palette::border())
         .bg(Palette::face())
         .overflow_hidden();
-    let last = ctl.rows.len().saturating_sub(1);
     for (i, row) in ctl.rows.iter().enumerate() {
-        rack = rack.child(render_unit(ctl, row, i == 0, i == last, cx));
+        rack = rack.child(render_unit(ctl, row, i == 0, cx));
     }
     rack
 }
 
-fn render_unit(
-    ctl: &Controller,
-    row: &Row,
-    first: bool,
-    last: bool,
-    cx: &Context<Panel>,
-) -> AnyElement {
+fn render_unit(ctl: &Controller, row: &Row, first: bool, cx: &Context<Panel>) -> AnyElement {
     let m = row.module;
     let lamp = row.lamp();
-    let color = Palette::lamp(lamp);
     let stack = ctl.stack();
     let describe = stack
         .describe(m)
@@ -52,6 +47,33 @@ fn render_unit(
         .iter()
         .any(|p| matches!(p, Problem::Missing { .. }));
 
+    let name = v_flex()
+        .w(px(250.))
+        .gap_0p5()
+        .child(
+            h_flex()
+                .gap_2()
+                .items_baseline()
+                .child(
+                    div()
+                        .text_size(px(16.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(m.name()),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(Palette::text_tertiary())
+                        .child(row.state_label()),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(Palette::text_secondary())
+                .truncate()
+                .child(describe),
+        );
     let face = h_flex().h(px(UNIT_HEIGHT)).child(
         h_flex()
             .flex_1()
@@ -59,39 +81,7 @@ fn render_unit(
             .pl_4()
             .pr_3()
             .gap_6()
-            .child(lamp_dot(m, lamp, color))
-            .child(
-                v_flex()
-                    .w(px(250.))
-                    .gap_0p5()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_baseline()
-                            .child(
-                                div()
-                                    .text_size(px(16.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(m.name()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(match lamp {
-                                        Lamp::Off => Palette::text_tertiary().into(),
-                                        _ => color,
-                                    })
-                                    .child(row.state_label()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(Palette::text_secondary())
-                            .truncate()
-                            .child(describe),
-                    ),
-            )
+            .child(h_flex().gap(px(BEZEL_GAP)).child(led(m, lamp)).child(name))
             .child(render_ports(ctl, row))
             .child(render_pids(row))
             .child(div().flex_1())
@@ -99,14 +89,16 @@ fn render_unit(
     );
 
     let notes = notes(ctl, row);
-    let content = v_flex()
-        .flex_1()
+    v_flex()
+        .when(!first, |this| {
+            this.border_t_1().border_color(Palette::border())
+        })
         .child(face)
         .when(!notes.is_empty(), |this| {
             this.child(
                 v_flex()
-                    // Lines up under the module's name (measured on screen).
-                    .pl(px(58.))
+                    // Under the module's name.
+                    .pl(px(16. + BEZEL_WIDTH + BEZEL_GAP))
                     .pr_4()
                     .pb_3()
                     .mt(px(-10.))
@@ -118,78 +110,48 @@ fn render_unit(
                             .child(SharedString::from(text))
                     })),
             )
-        });
-    h_flex()
-        .items_stretch()
-        .when(!first, |this| {
-            this.border_t_1().border_color(Palette::border())
         })
-        .child(rail(m, lamp, color, first, last))
-        .child(content)
         .into_any_element()
 }
 
-/// The coloured bar down the unit's left edge: lit while the module runs.
-/// `first`/`last` round its outer corners to the rack's (overflow_hidden
-/// doesn't clip to rounded corners).
-fn rail(m: Module, lamp: Lamp, color: Hsla, first: bool, last: bool) -> AnyElement {
-    let base = div()
-        .w(px(4.))
-        .flex_none()
-        .when(first, |this| this.rounded_tl(px(7.)))
-        .when(last, |this| this.rounded_bl(px(7.)));
-    match lamp {
-        Lamp::Off => base.bg(Palette::border()).into_any_element(),
-        Lamp::On | Lamp::Fault => base.bg(color).into_any_element(),
-        Lamp::Busy => base
-            .bg(color)
-            .with_animation(
-                SharedString::from(format!("rail-{}", m.id())),
-                Animation::new(Duration::from_millis(1100))
-                    .repeat()
-                    .with_easing(gpui_kit::pulsating_between(0.35, 1.0)),
-                |this, t| this.opacity(t),
-            )
-            .into_any_element(),
-    }
-}
-
-/// The lamp, with a halo when lit.
-fn lamp_dot(m: Module, lamp: Lamp, color: Hsla) -> AnyElement {
-    let dot = div().size(px(10.)).rounded_full().bg(color);
-    let halo = |alpha: f32| {
-        div()
-            .size(px(22.))
-            .flex_none()
-            .rounded_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(color.opacity(alpha))
+/// A front-panel LED in a recessed bezel: dark when off, lit in the
+/// lamp's colour with a glint along its top, pulsing while busy.
+fn led(m: Module, lamp: Lamp) -> AnyElement {
+    let body = div().w(px(12.)).h(px(5.)).rounded(px(1.));
+    let body = match lamp {
+        Lamp::Off => body.bg(Palette::border()),
+        _ => body.bg(Palette::lamp(lamp)).child(
+            div()
+                .mx(px(2.))
+                .h(px(1.))
+                .bg(gpui_kit::white().opacity(0.45)),
+        ),
     };
-    match lamp {
-        Lamp::Off => halo(0.)
-            .child(
-                div()
-                    .size(px(10.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(color),
-            )
-            .into_any_element(),
-        Lamp::On => halo(0.18).child(dot).into_any_element(),
-        Lamp::Fault => halo(0.16).child(dot).into_any_element(),
-        Lamp::Busy => halo(0.16)
-            .child(dot)
+    let body = match lamp {
+        Lamp::Busy => body
             .with_animation(
-                SharedString::from(format!("lamp-{}", m.id())),
+                SharedString::from(format!("led-{}", m.id())),
                 Animation::new(Duration::from_millis(1100))
                     .repeat()
-                    .with_easing(gpui_kit::pulsating_between(0.35, 1.0)),
+                    .with_easing(gpui_kit::pulsating_between(0.3, 1.0)),
                 |this, t| this.opacity(t),
             )
             .into_any_element(),
-    }
+        _ => body.into_any_element(),
+    };
+    div()
+        .flex_none()
+        .w(px(BEZEL_WIDTH))
+        .h(px(11.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(2.))
+        .border_1()
+        .border_color(Palette::border())
+        .bg(Palette::well())
+        .child(body)
+        .into_any_element()
 }
 
 /// A small caption over a monospaced value.
