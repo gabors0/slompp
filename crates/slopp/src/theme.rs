@@ -31,6 +31,51 @@ pub enum Lamp {
     Fault,
 }
 
+/// The colours of SLOPP's mark, the S of three rack units: white units for
+/// dark backgrounds, black ones for light. The title bar and the tray icon
+/// draw it the same way.
+pub struct MarkInk {
+    pub unit: u32,
+    /// The links between the units.
+    pub link: u32,
+    pub on: u32,
+    pub busy: u32,
+    pub fault: u32,
+    /// Where a lit lamp's gradient becomes opaque, as a fraction of the way
+    /// from its transparent end: black units keep it solid for longer, so
+    /// the colour holds up against the black.
+    pub lamp_solid: f32,
+}
+
+impl MarkInk {
+    pub const WHITE: MarkInk = MarkInk {
+        unit: 0xFFFFFF,
+        link: 0xB9B9B9,
+        on: 0x149A50,
+        busy: 0xF4A000,
+        fault: 0xD93327,
+        lamp_solid: 1.0,
+    };
+    pub const BLACK: MarkInk = MarkInk {
+        unit: 0x000000,
+        link: 0x737373,
+        on: 0x1F8F58,
+        busy: 0xB07A12,
+        fault: 0xC5372B,
+        lamp_solid: 0.4,
+    };
+
+    /// A lit lamp's colour.
+    pub fn lamp(&self, lamp: Lamp) -> Option<u32> {
+        match lamp {
+            Lamp::Off => None,
+            Lamp::Busy => Some(self.busy),
+            Lamp::On => Some(self.on),
+            Lamp::Fault => Some(self.fault),
+        }
+    }
+}
+
 pub struct Palette;
 
 impl Palette {
@@ -62,12 +107,9 @@ impl Palette {
     pub fn accent() -> Rgba {
         pick(rgb(0xF07B2C), rgb(0xD45F17))
     }
-    /// The mark's units and the links between them.
-    pub fn mark() -> Rgba {
-        pick(rgb(0xFFFFFF), rgb(0x000000))
-    }
-    pub fn mark_link() -> Rgba {
-        pick(rgb(0xB9B9B9), rgb(0x737373))
+    /// The mark's colours for the window's appearance.
+    pub fn mark() -> &'static MarkInk {
+        pick(&MarkInk::WHITE, &MarkInk::BLACK)
     }
     pub fn ok() -> Rgba {
         pick(rgb(0x4CC38A), rgb(0x1F8F58))

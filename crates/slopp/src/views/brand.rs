@@ -3,20 +3,27 @@
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Div, FontWeight, MouseButton, div, px};
+use gpui_kit::{
+    Context, Div, FontWeight, Hsla, MouseButton, div, linear_color_stop, linear_gradient, px, rgb,
+};
+use slopp_core::Module;
 
 use crate::controller::Controller;
 use crate::panel::{Page, Panel, on_controller};
-use crate::theme::Palette;
+use crate::theme::{Lamp, Palette};
 
 /// SLOPP's mark, as in the tray: three rack units joined into an S by a
 /// link on the left (top to middle) and one on the right (middle to bottom).
-pub fn mark() -> Div {
+/// The top unit's lamp is Apache's, the middle one's MySQL's.
+pub fn mark(apache: Lamp, mysql: Lamp) -> Div {
     const WIDTH: f32 = 18.;
     const UNIT: f32 = 5.;
     const GAP: f32 = 2.;
-    // The units' height to their width, as in the design.
+    // From the 512 grid the tray icon is drawn on: units 428 wide and 112
+    // high, lamps over their right 285.
     const LINK: f32 = WIDTH * 112. / 428.;
+    const LAMP: f32 = WIDTH * 285. / 428.;
+    let ink = Palette::mark();
     let link = |left: f32, top_unit: f32| {
         div()
             .absolute()
@@ -24,14 +31,32 @@ pub fn mark() -> Div {
             .top(px(top_unit * (UNIT + GAP) + UNIT / 2.))
             .w(px(LINK))
             .h(px(UNIT + GAP))
-            .bg(Palette::mark_link())
+            .bg(rgb(ink.link))
     };
-    let unit = || {
+    let unit = |lamp: Lamp| {
         div()
+            .relative()
             .w(px(WIDTH))
             .h(px(UNIT))
             .rounded(px(1.))
-            .bg(Palette::mark())
+            .bg(rgb(ink.unit))
+            .when_some(ink.lamp(lamp), |this, color| {
+                let color = Hsla::from(rgb(color));
+                this.child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .w(px(LAMP))
+                        .h_full()
+                        .rounded(px(1.))
+                        .bg(linear_gradient(
+                            90.,
+                            linear_color_stop(color.opacity(0.), 0.),
+                            linear_color_stop(color, ink.lamp_solid),
+                        )),
+                )
+            })
     };
     // The links first, so the units cover their ends.
     v_flex()
@@ -39,9 +64,9 @@ pub fn mark() -> Div {
         .gap(px(GAP))
         .child(link(0., 0.))
         .child(link(WIDTH - LINK, 1.))
-        .child(unit())
-        .child(unit())
-        .child(unit())
+        .child(unit(apache))
+        .child(unit(mysql))
+        .child(unit(Lamp::Off))
 }
 
 /// Keeps presses on controls inside the title bar to themselves: the bar
@@ -51,7 +76,8 @@ pub fn controls(element: Div) -> Div {
     element.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
-pub fn render_nav(panel: &Panel, cx: &Context<Panel>) -> impl IntoElement {
+pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let lamp = |module| ctl.row(module).lamp();
     let tab = |id: &'static str, label: &'static str, page: Page, cx: &Context<Panel>| {
         let active = panel.page == page;
         div()
@@ -78,12 +104,15 @@ pub fn render_nav(panel: &Panel, cx: &Context<Panel>) -> impl IntoElement {
     h_flex()
         .gap_5()
         .child(
-            h_flex().gap_2().child(mark()).child(
-                div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::BOLD)
-                    .child("SLOPP"),
-            ),
+            h_flex()
+                .gap_2()
+                .child(mark(lamp(Module::Apache), lamp(Module::MySql)))
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::BOLD)
+                        .child("SLOPP"),
+                ),
         )
         .child(
             controls(h_flex().gap_1())
