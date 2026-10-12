@@ -9,31 +9,39 @@ use crate::controller::Controller;
 use crate::panel::{Page, Panel, on_controller};
 use crate::theme::Palette;
 
-/// Three rack units, the top one with its lamp lit.
+/// SLOPP's mark, as in the tray: three rack units joined into an S by a
+/// link on the left (top to middle) and one on the right (middle to bottom).
 pub fn mark() -> Div {
-    let unit = |lamp: bool| {
-        h_flex()
-            .w(px(18.))
-            .h(px(5.))
-            .px(px(1.5))
-            .justify_end()
-            .rounded(px(1.5))
-            .bg(Palette::text_secondary())
-            .when(lamp, |this| {
-                this.child(
-                    div()
-                        .w(px(5.))
-                        .h(px(3.))
-                        .rounded(px(1.))
-                        .bg(Palette::accent()),
-                )
-            })
+    const WIDTH: f32 = 18.;
+    const UNIT: f32 = 5.;
+    const GAP: f32 = 2.;
+    // The units' height to their width, as in the design.
+    const LINK: f32 = WIDTH * 112. / 428.;
+    let link = |left: f32, top_unit: f32| {
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top_unit * (UNIT + GAP) + UNIT / 2.))
+            .w(px(LINK))
+            .h(px(UNIT + GAP))
+            .bg(Palette::mark_link())
     };
+    let unit = || {
+        div()
+            .w(px(WIDTH))
+            .h(px(UNIT))
+            .rounded(px(1.))
+            .bg(Palette::mark())
+    };
+    // The links first, so the units cover their ends.
     v_flex()
-        .gap(px(2.))
-        .child(unit(true))
-        .child(unit(false))
-        .child(unit(false))
+        .relative()
+        .gap(px(GAP))
+        .child(link(0., 0.))
+        .child(link(WIDTH - LINK, 1.))
+        .child(unit())
+        .child(unit())
+        .child(unit())
 }
 
 /// Keeps presses on controls inside the title bar to themselves: the bar
