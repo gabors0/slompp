@@ -40,6 +40,24 @@ SLOPP again while it runs brings its window back instead of starting a
 second copy, and so does a click on its Dock icon on macOS.
 `SLOPP_HIDDEN=1 slopp` starts it in the tray only, e.g. for login autostart.
 
+## Downloads
+
+[Releases](https://github.com/gabors0/slopp/releases) have builds for Linux
+(x86_64, glibc 2.39 or newer) and macOS (Apple silicon). Install the servers
+first, as below; SLOPP doesn't bundle them.
+
+- **Linux:** unpack the tarball and run `slopp`, or `sloppctl` from a terminal.
+  It needs libxkbcommon, Wayland or X11, and a Vulkan driver, which desktop
+  installs usually have.
+- **NixOS:** the release binary won't find its libraries; use the flake
+  instead, which also puts Apache, PHP and MariaDB on `PATH`:
+  `nix run github:gabors0/slopp`, or
+  `nix profile install github:gabors0/slopp` to keep it.
+- **macOS:** unzip and move `SLOPP.app` to /Applications. The app isn't
+  notarized, so macOS blocks the first launch: allow it in System Settings →
+  Privacy & Security, or run
+  `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
+
 ## Running it
 
 On NixOS / with Nix:
