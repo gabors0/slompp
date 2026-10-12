@@ -1,5 +1,5 @@
 {
-  description = "SLOMPP: an XAMPP-style GPUI control panel for Apache, PHP, MariaDB and phpMyAdmin";
+  description = "SLOPP: an XAMPP-style GPUI control panel for Apache, PHP, MariaDB and phpMyAdmin";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -52,8 +52,8 @@
           python3
         ];
 
-        slompp = pkgs.rustPlatform.buildRustPackage {
-          pname = "slompp";
+        slopp = pkgs.rustPlatform.buildRustPackage {
+          pname = "slopp";
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
@@ -64,33 +64,33 @@
           inherit buildInputs;
 
           postInstall = ''
-            install -Dm644 crates/slompp/assets/linux/org.slompp.Slompp.desktop \
-              $out/share/applications/org.slompp.Slompp.desktop
-            install -Dm644 crates/slompp/assets/linux/org.slompp.Slompp.svg \
-              $out/share/icons/hicolor/scalable/apps/org.slompp.Slompp.svg
+            install -Dm644 crates/slopp/assets/linux/org.slopp.Slopp.desktop \
+              $out/share/applications/org.slopp.Slopp.desktop
+            install -Dm644 crates/slopp/assets/linux/org.slopp.Slopp.svg \
+              $out/share/icons/hicolor/scalable/apps/org.slopp.Slopp.svg
           '';
 
           postFixup = ''
-            wrapProgram $out/bin/slompp \
+            wrapProgram $out/bin/slopp \
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs} \
               --suffix PATH : ${pkgs.lib.makeBinPath modules}
-            wrapProgram $out/bin/slomppctl \
+            wrapProgram $out/bin/sloppctl \
               --suffix PATH : ${pkgs.lib.makeBinPath modules}
           '';
 
           meta = {
             description = "XAMPP-style control panel built with GPUI";
-            mainProgram = "slompp";
+            mainProgram = "slopp";
             platforms = pkgs.lib.platforms.linux;
           };
         };
       in
       {
-        packages.default = slompp;
+        packages.default = slopp;
 
         apps.default = {
           type = "app";
-          program = "${slompp}/bin/slompp";
+          program = "${slopp}/bin/slopp";
         };
 
         devShells.default = pkgs.mkShell {
