@@ -79,12 +79,27 @@ impl TrayState {
     }
 }
 
+/// What sits in front of a menu item's label.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuIcon {
+    /// A module's lamp, as a dot of its colour (a ring while it's off).
+    Lamp(Lamp),
+    Start,
+    Stop,
+    Site,
+    Database,
+    Panel,
+    Quit,
+}
+
 /// A line of the tray's menu.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry {
     Item {
         label: String,
+        icon: MenuIcon,
         enabled: bool,
         command: TrayCommand,
     },
@@ -95,39 +110,63 @@ pub enum MenuEntry {
 impl TrayState {
     /// The menu for this state, the same on every platform.
     pub fn menu(&self) -> Vec<MenuEntry> {
-        let item = |label: &str, enabled, command| MenuEntry::Item {
+        let item = |label: &str, icon, enabled, command| MenuEntry::Item {
             label: label.to_string(),
+            icon,
             enabled,
             command,
         };
-        let mut menu = Vec::new();
+        let busy = self.modules.iter().any(|m| m.busy);
+        let all = self.modules.iter().all(|m| m.running);
+        let any = self.modules.iter().any(|m| m.running);
+        let mut menu = vec![
+            item(
+                "Start all",
+                MenuIcon::Start,
+                !busy && !all,
+                TrayCommand::StartAll,
+            ),
+            item(
+                "Stop all",
+                MenuIcon::Stop,
+                !busy && any,
+                TrayCommand::StopAll,
+            ),
+            MenuEntry::Separator,
+        ];
         for m in &self.modules {
             let verb = if m.running { "Stop" } else { "Start" };
             menu.push(item(
                 &format!("{verb} {}", m.module.name()),
+                MenuIcon::Lamp(m.lamp),
                 !m.busy,
                 TrayCommand::Toggle(m.module),
             ));
         }
-        let busy = self.modules.iter().any(|m| m.busy);
-        let all = self.modules.iter().all(|m| m.running);
-        let any = self.modules.iter().any(|m| m.running);
-        menu.push(MenuEntry::Separator);
-        menu.push(item("Start all", !busy && !all, TrayCommand::StartAll));
-        menu.push(item("Stop all", !busy && any, TrayCommand::StopAll));
         menu.push(MenuEntry::Separator);
         let apache = self.running(Module::Apache);
-        menu.push(item("Open site", apache, TrayCommand::OpenSite));
+        menu.push(item(
+            "Open site",
+            MenuIcon::Site,
+            apache,
+            TrayCommand::OpenSite,
+        ));
         for &tool in &self.db_admins {
             menu.push(item(
                 &format!("Open {}", tool.name()),
+                MenuIcon::Database,
                 apache && self.running(Module::MySql),
                 TrayCommand::OpenDbAdmin(tool),
             ));
         }
         menu.push(MenuEntry::Separator);
-        menu.push(item("Show panel", true, TrayCommand::ShowPanel));
-        menu.push(item("Quit SLOPP", true, TrayCommand::Quit));
+        menu.push(item(
+            "Show panel",
+            MenuIcon::Panel,
+            true,
+            TrayCommand::ShowPanel,
+        ));
+        menu.push(item("Quit SLOPP", MenuIcon::Quit, true, TrayCommand::Quit));
         menu
     }
 }
@@ -198,15 +237,45 @@ impl SloppTray {
     }
 }
 
+/// Menu icons are 16 pixels; lamps are drawn at twice that for HiDPI panels.
+#[cfg(target_os = "linux")]
+const LAMP_PIXELS: i32 = 32;
+
+#[cfg(target_os = "linux")]
+impl MenuIcon {
+    /// The icon's name in the desktop's icon theme; lamps are drawn instead.
+    fn theme_name(self) -> &'static str {
+        match self {
+            MenuIcon::Lamp(_) => "",
+            MenuIcon::Start => "media-playback-start",
+            MenuIcon::Stop => "media-playback-stop",
+            MenuIcon::Site => "internet-web-browser",
+            MenuIcon::Database => "server-database",
+            MenuIcon::Panel => "view-restore",
+            MenuIcon::Quit => "application-exit",
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn item(
     label: impl Into<String>,
+    icon: MenuIcon,
+    light_panel: bool,
     enabled: bool,
     command: TrayCommand,
 ) -> ksni::MenuItem<SloppTray> {
+    let icon_data = match icon {
+        MenuIcon::Lamp(lamp) => {
+            icon::lamp(LAMP_PIXELS, lamp, icon::Ink::for_panel(light_panel)).png()
+        }
+        _ => Vec::new(),
+    };
     ksni::menu::StandardItem {
         label: label.into(),
         enabled,
+        icon_name: icon.theme_name().into(),
+        icon_data,
         activate: Box::new(move |tray: &mut SloppTray| tray.send(command)),
         ..Default::default()
     }
@@ -268,9 +337,10 @@ impl ksni::Tray for SloppTray {
             .map(|entry| match entry {
                 MenuEntry::Item {
                     label,
+                    icon,
                     enabled,
                     command,
-                } => item(label, enabled, command),
+                } => item(label, icon, self.state.light_panel, enabled, command),
                 MenuEntry::Separator => ksni::MenuItem::Separator,
             })
             .collect()
@@ -370,6 +440,11 @@ pub mod icon {
                 Ink::Template => ([0x00, 0x00, 0x00], 0.55),
                 _ => (rgb(self.colors().link), 1.0),
             }
+        }
+
+        /// The colour and alpha of an unlit lamp's ring in the menu.
+        fn lamp_off(self) -> (Rgb, f32) {
+            self.link()
         }
 
         /// A lit lamp's colour.
@@ -494,10 +569,47 @@ pub mod icon {
         shapes
     }
 
-    /// The icon at `size`×`size`, 4×4 supersampled.
+    /// The icon at `size`×`size`.
     pub fn render(size: i32, apache: Lamp, mysql: Lamp, ink: Ink) -> Pixmap {
-        const SS: i32 = 4;
         let shapes = shapes(apache, mysql, ink);
+        rasterize(size, |x, y| {
+            // Each shape over the ones before it, premultiplied.
+            let mut sample = [0.0f32; 4];
+            for shape in shapes.iter().filter(|s| s.contains(x, y)) {
+                let (color, alpha) = shape.paint(x);
+                for c in 0..3 {
+                    sample[c] = f32::from(color[c]) * alpha + sample[c] * (1.0 - alpha);
+                }
+                sample[3] = alpha + sample[3] * (1.0 - alpha);
+            }
+            sample
+        })
+    }
+
+    /// A module's lamp for the menu, `size`×`size`: a dot of the lamp's
+    /// colour, or a grey ring while it's off, so the two also differ in
+    /// shape.
+    pub fn lamp(size: i32, lamp: Lamp, ink: Ink) -> Pixmap {
+        const CENTER: f32 = GRID / 2.0;
+        const DOT_RADIUS: f32 = 150.0;
+        const RING_WIDTH: f32 = 56.0;
+        let lit = ink.lamp(lamp);
+        let (color, alpha) = lit.map_or(ink.lamp_off(), |color| (color, 1.0));
+        rasterize(size, |x, y| {
+            let distance = (x - CENTER).hypot(y - CENTER);
+            let hole = lit.is_none() && distance < DOT_RADIUS - RING_WIDTH;
+            if distance > DOT_RADIUS || hole {
+                return [0.0; 4];
+            }
+            let [r, g, b] = color.map(|c| f32::from(c) * alpha);
+            [r, g, b, alpha]
+        })
+    }
+
+    /// A `size`×`size` picture, 4×4 supersampled, of what `sample` gives for
+    /// a point of the design grid as premultiplied RGBA (alpha 0 to 1).
+    fn rasterize(size: i32, sample: impl Fn(f32, f32) -> [f32; 4]) -> Pixmap {
+        const SS: i32 = 4;
         let scale = GRID / size as f32;
         let mut data = Vec::with_capacity((size * size * 4) as usize);
         for py in 0..size {
@@ -508,15 +620,7 @@ pub mod icon {
                     for sx in 0..SS {
                         let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * scale;
                         let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * scale;
-                        // Each shape over the ones before it, premultiplied.
-                        let mut sample = [0.0f32; 4];
-                        for shape in shapes.iter().filter(|s| s.contains(x, y)) {
-                            let (color, alpha) = shape.paint(x);
-                            for c in 0..3 {
-                                sample[c] = f32::from(color[c]) * alpha + sample[c] * (1.0 - alpha);
-                            }
-                            sample[3] = alpha + sample[3] * (1.0 - alpha);
-                        }
+                        let sample = sample(x, y);
                         r += sample[0];
                         g += sample[1];
                         b += sample[2];
@@ -537,6 +641,74 @@ pub mod icon {
             height: size,
             data,
         }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    impl Pixmap {
+        /// The picture as a PNG file, which is how menu items over D-Bus
+        /// take their icons. The pixels go in uncompressed: it's a few
+        /// kilobytes.
+        pub fn png(&self) -> Vec<u8> {
+            // Each row is a filter byte (0: none) and its RGBA pixels.
+            let mut rows = Vec::with_capacity(self.data.len() + self.height as usize);
+            for row in self.data.chunks_exact(self.width as usize * 4) {
+                rows.push(0);
+                for &[a, r, g, b] in row.as_chunks::<4>().0 {
+                    rows.extend_from_slice(&[r, g, b, a]);
+                }
+            }
+            // A zlib stream of stored blocks, which hold up to 65535 bytes.
+            let mut zlib = vec![0x78, 0x01];
+            let mut blocks = rows.chunks(0xFFFF).peekable();
+            while let Some(block) = blocks.next() {
+                let len = block.len() as u16;
+                zlib.push(u8::from(blocks.peek().is_none()));
+                zlib.extend_from_slice(&len.to_le_bytes());
+                zlib.extend_from_slice(&(!len).to_le_bytes());
+                zlib.extend_from_slice(block);
+            }
+            zlib.extend_from_slice(&adler32(&rows).to_be_bytes());
+
+            let mut header = Vec::with_capacity(13);
+            header.extend_from_slice(&(self.width as u32).to_be_bytes());
+            header.extend_from_slice(&(self.height as u32).to_be_bytes());
+            // 8 bits per channel, RGBA, deflate, adaptive filters, no
+            // interlacing.
+            header.extend_from_slice(&[8, 6, 0, 0, 0]);
+
+            let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+            for (kind, body) in [(b"IHDR", &header), (b"IDAT", &zlib), (b"IEND", &Vec::new())] {
+                png.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                let start = png.len();
+                png.extend_from_slice(kind);
+                png.extend_from_slice(body);
+                let crc = crc32(&png[start..]);
+                png.extend_from_slice(&crc.to_be_bytes());
+            }
+            png
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn adler32(bytes: &[u8]) -> u32 {
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in bytes {
+            a = (a + u32::from(byte)) % 65521;
+            b = (b + a) % 65521;
+        }
+        b << 16 | a
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+            }
+        }
+        !crc
     }
 
     #[cfg(test)]
@@ -592,6 +764,41 @@ pub mod icon {
             assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
             assert_eq!(pixel(&icon, 20, 16), [255, 0xB0, 0x7A, 0x12]);
             assert_eq!(pixel(&icon, 5, 11), [255, 0x73, 0x73, 0x73]);
+        }
+
+        #[test]
+        fn menu_lamps_are_dots_and_off_is_a_ring() {
+            let on = lamp(32, Lamp::On, Ink::White);
+            assert_eq!(pixel(&on, 16, 16), [255, 0x14, 0x9A, 0x50]);
+            assert_eq!(pixel(&on, 16, 8), [255, 0x14, 0x9A, 0x50]);
+            assert_eq!(pixel(&on, 0, 0)[0], 0);
+            assert_eq!(pixel(&on, 16, 3)[0], 0);
+            let off = lamp(32, Lamp::Off, Ink::Black);
+            assert_eq!(pixel(&off, 16, 16)[0], 0);
+            assert_eq!(pixel(&off, 16, 8), [255, 0x73, 0x73, 0x73]);
+        }
+
+        #[test]
+        fn png_wraps_the_pixels_in_checked_chunks() {
+            // The check values of the two checksums' specifications.
+            assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+            assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
+
+            let png = lamp(32, Lamp::Fault, Ink::White).png();
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+            // IHDR: 13 bytes, 32×32.
+            assert_eq!(&png[8..16], b"\0\0\0\x0dIHDR");
+            assert_eq!(&png[16..24], [0, 0, 0, 32, 0, 0, 0, 32]);
+            // IDAT: the zlib header, one final stored block of 32 rows of
+            // a filter byte and 32 pixels, and the Adler-32.
+            let rows = 32 * (1 + 32 * 4);
+            assert_eq!(&png[33..41], [0, 0, 0x10, 0x2B, b'I', b'D', b'A', b'T']);
+            assert_eq!(2 + 5 + rows + 4, 0x102B);
+            assert_eq!(&png[41..48], [0x78, 0x01, 1, 0x20, 0x10, 0xDF, 0xEF]);
+            // The centre pixel, as RGBA.
+            let pixel = 48 + 16 * (1 + 32 * 4) + 1 + 16 * 4;
+            assert_eq!(&png[pixel..pixel + 4], [0xD9, 0x33, 0x27, 255]);
+            assert_eq!(&png[png.len() - 12..png.len() - 4], b"\0\0\0\0IEND");
         }
 
         #[test]
@@ -659,8 +866,9 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn menu_follows_what_runs() {
-        let entry = |label: &str, enabled, command| MenuEntry::Item {
+        let entry = |label: &str, icon, enabled, command| MenuEntry::Item {
             label: label.to_string(),
+            icon,
             enabled,
             command,
         };
@@ -675,21 +883,32 @@ mod tests {
         assert_eq!(
             state.menu(),
             vec![
-                entry("Stop Apache", true, TrayCommand::Toggle(Module::Apache)),
-                entry("Start MySQL", true, TrayCommand::Toggle(Module::MySql)),
+                entry("Start all", MenuIcon::Start, true, TrayCommand::StartAll),
+                entry("Stop all", MenuIcon::Stop, true, TrayCommand::StopAll),
                 MenuEntry::Separator,
-                entry("Start all", true, TrayCommand::StartAll),
-                entry("Stop all", true, TrayCommand::StopAll),
+                entry(
+                    "Stop Apache",
+                    MenuIcon::Lamp(Lamp::On),
+                    true,
+                    TrayCommand::Toggle(Module::Apache)
+                ),
+                entry(
+                    "Start MySQL",
+                    MenuIcon::Lamp(Lamp::Off),
+                    true,
+                    TrayCommand::Toggle(Module::MySql)
+                ),
                 MenuEntry::Separator,
-                entry("Open site", true, TrayCommand::OpenSite),
+                entry("Open site", MenuIcon::Site, true, TrayCommand::OpenSite),
                 entry(
                     "Open Adminer",
+                    MenuIcon::Database,
                     false,
                     TrayCommand::OpenDbAdmin(DbAdmin::Adminer)
                 ),
                 MenuEntry::Separator,
-                entry("Show panel", true, TrayCommand::ShowPanel),
-                entry("Quit SLOPP", true, TrayCommand::Quit),
+                entry("Show panel", MenuIcon::Panel, true, TrayCommand::ShowPanel),
+                entry("Quit SLOPP", MenuIcon::Quit, true, TrayCommand::Quit),
             ]
         );
     }
