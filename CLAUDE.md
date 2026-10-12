@@ -20,6 +20,7 @@ nix build                                                               # result
 
 - The first GPUI build takes ~10 minutes.
 - macOS has no Nix shell (the flake is Linux only): use plain `cargo` with Homebrew's `rust`, and `brew install php mariadb` (or keg-only `mariadb@11.8` beside Homebrew's `mysql`; `httpd` is optional, macOS ships one). `scripts/bundle-macos.sh` builds `target/release/SLOPP.app`.
+- Releases: bump `version` in the workspace `Cargo.toml`, then push a matching tag (`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml` builds a Linux x86_64 tarball (plain cargo on Ubuntu 24.04, so glibc ≥ 2.39) and an Apple silicon `SLOPP.app` zip, and publishes them as a GitHub release; a tag that doesn't match the version fails the run. "Run workflow" builds without releasing. Nothing else runs CI.
 - Try the stack without the GUI: `SLOPP_ROOT=<dir> XDG_CONFIG_HOME=<dir> sloppctl start|stop|status|ports|paths|install-phpmyadmin|install-adminer`.
 
 ## Running and inspecting the UI
