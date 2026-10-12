@@ -6283,7 +6283,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "slompp"
+name = "slopp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6297,13 +6297,13 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "serde",
  "serde_json",
- "slompp-core",
+ "slopp-core",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "slompp-core"
+name = "slopp-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",

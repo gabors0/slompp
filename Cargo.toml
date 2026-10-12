@@ -8,7 +8,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-slompp-core = { path = "crates/slompp-core" }
+slopp-core = { path = "crates/slopp-core" }
 
 gpui-kit = "=0.7.1"
 

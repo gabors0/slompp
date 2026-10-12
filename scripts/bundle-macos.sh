@@ -1,6 +1,6 @@
 #!/bin/sh
-# Builds SLOMPP.app: the panel as a macOS application for /Applications,
-# Launchpad and the Dock, with slomppctl next to it.
+# Builds SLOPP.app: the panel as a macOS application for /Applications,
+# Launchpad and the Dock, with sloppctl next to it.
 #
 #   scripts/bundle-macos.sh [output directory, default target/release]
 #
@@ -9,17 +9,17 @@ set -eu
 
 cd "$(dirname "$0")/.."
 out="${1:-target/release}"
-app="$out/SLOMPP.app"
+app="$out/SLOPP.app"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 
-cargo build --release -p slompp -p slompp-core
+cargo build --release -p slopp -p slopp-core
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/slompp target/release/slomppctl "$app/Contents/MacOS/"
+cp target/release/slopp target/release/sloppctl "$app/Contents/MacOS/"
 
 # The icon, at every size macOS asks for, from the same SVG Linux uses.
-iconset="$(mktemp -d)/SLOMPP.iconset"
+iconset="$(mktemp -d)/SLOPP.iconset"
 mkdir "$iconset"
 for size in 16 32 128 256 512; do
     for scale in 1 2; do
@@ -27,11 +27,11 @@ for size in 16 32 128 256 512; do
         name="icon_${size}x${size}"
         [ "$scale" = 2 ] && name="${name}@2x"
         sips -s format png -z "$pixels" "$pixels" \
-            crates/slompp/assets/linux/org.slompp.Slompp.svg \
+            crates/slopp/assets/linux/org.slopp.Slopp.svg \
             --out "$iconset/$name.png" >/dev/null
     done
 done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/SLOMPP.icns"
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/SLOPP.icns"
 rm -rf "$(dirname "$iconset")"
 
 cat >"$app/Contents/Info.plist" <<PLIST
@@ -40,15 +40,15 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>SLOMPP</string>
+    <string>SLOPP</string>
     <key>CFBundleDisplayName</key>
-    <string>SLOMPP</string>
+    <string>SLOPP</string>
     <key>CFBundleIdentifier</key>
-    <string>org.slompp.Slompp</string>
+    <string>org.slopp.Slopp</string>
     <key>CFBundleExecutable</key>
-    <string>slompp</string>
+    <string>slopp</string>
     <key>CFBundleIconFile</key>
-    <string>SLOMPP</string>
+    <string>SLOPP</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

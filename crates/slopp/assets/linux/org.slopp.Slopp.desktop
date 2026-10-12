@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SLOPP
+GenericName=Web Server Control Panel
+Comment=Start and stop Apache, PHP and MariaDB for local development
+Exec=slopp
+Icon=org.slopp.Slopp
+Terminal=false
+Categories=Development;WebDevelopment;
+Keywords=apache;php;mysql;mariadb;xampp;phpmyadmin;server;
+StartupWMClass=org.slopp.Slopp
