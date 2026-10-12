@@ -1,7 +1,17 @@
-# SLOPP
+<table>
+  <tr>
+    <td align="center" valign="middle">
+      <img src="https://raw.githubusercontent.com/gabors0/slopp/refs/heads/main/crates/slopp/assets/linux/org.slopp.Slopp.svg" width="120" alt="SLOPP logo">
+    </td>
+    <td>
+      <h1>SLOPP</h1>
+      An XAMPP-style local web stack with a control panel written in Rust on
+[GPUI](https://gpui-kit.com). 
+    </td>
+  </tr>
+</table>
 
-An XAMPP-style local web stack with a control panel written in Rust on
-[GPUI](https://gpui-kit.com). The servers are the stock upstream programs, the
+The servers are the stock upstream programs, the
 same modules XAMPP ships:
 
 | Module  | What runs                                        |
