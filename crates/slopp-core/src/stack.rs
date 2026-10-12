@@ -177,7 +177,13 @@ impl Stack {
             Module::Apache => match &self.tools.httpd {
                 None => problems.push(Problem::Missing {
                     what: "Apache httpd",
-                    hint: "Install Apache (httpd or apache2), or set its path in Settings.".into(),
+                    hint: if cfg!(windows) {
+                        "Install Apache (e.g. Apache Lounge's build in C:\\Apache24), \
+                         or set the path of httpd.exe in Settings."
+                    } else {
+                        "Install Apache (httpd or apache2), or set its path in Settings."
+                    }
+                    .into(),
                 }),
                 Some(h) if h.modules.is_none() => problems.push(Problem::Missing {
                     what: "Apache's modules directory",
@@ -187,8 +193,13 @@ impl Stack {
                     if self.tools.php.is_none() {
                         problems.push(Problem::Missing {
                             what: "PHP",
-                            hint: "Install PHP with PHP-FPM or the Apache module (libphp.so)."
-                                .into(),
+                            hint: if cfg!(windows) {
+                                "Install the Thread Safe build of PHP, which has the Apache \
+                                 module (php8apache2_4.dll), or set the module's path in Settings."
+                            } else {
+                                "Install PHP with PHP-FPM or the Apache module (libphp.so)."
+                            }
+                            .into(),
                         });
                     }
                 }
@@ -197,8 +208,13 @@ impl Stack {
                 if self.tools.mariadb.is_none() {
                     problems.push(Problem::Missing {
                         what: "MariaDB",
-                        hint: "Install the MariaDB server (mariadbd), or set its path in Settings."
-                            .into(),
+                        hint: if cfg!(windows) {
+                            "Install MariaDB (its installer from mariadb.org), or set the path \
+                             of mariadbd.exe in Settings."
+                        } else {
+                            "Install the MariaDB server (mariadbd), or set its path in Settings."
+                        }
+                        .into(),
                     });
                 }
             }
@@ -468,6 +484,7 @@ impl Stack {
         }
 
         let mut procs = Vec::new();
+        let mut env = Vec::new();
         match &php.handler {
             PhpHandler::Module(lib) => {
                 args.extend([
@@ -476,6 +493,11 @@ impl Stack {
                     "-C".into(),
                     format!("Define PHP_MODULE_PATH \"{}\"", conf_path(lib)),
                 ]);
+                if cfg!(windows)
+                    && let Some(dir) = lib.parent()
+                {
+                    env = self.windows_php_env(dir)?;
+                }
             }
             PhpHandler::Fpm(fpm) => {
                 args.extend([
@@ -493,9 +515,10 @@ impl Stack {
 
         // Check the config first: a typo is reported in a second, with the
         // line number, instead of as a vanished process.
-        let check = Command::new(&httpd.bin)
+        let check = process::command(&httpd.bin)
             .args(&args)
             .arg("-t")
+            .envs(env.iter().cloned())
             .output()
             .with_context(|| format!("running {}", httpd.bin.display()))?;
         if !check.status.success() {
@@ -506,7 +529,7 @@ impl Stack {
         }
 
         let mut cmd = Command::new(&httpd.bin);
-        cmd.args(&args).arg("-DFOREGROUND");
+        cmd.args(&args).arg("-DFOREGROUND").envs(env);
         match process::spawn_detached(cmd, &layout.apache_console_log()) {
             Ok(child) => procs.insert(0, self.keep(child)),
             Err(err) => {
@@ -515,6 +538,32 @@ impl Stack {
             }
         }
         Ok(procs)
+    }
+
+    /// What mod_php needs on Windows from Apache's environment: PHP's
+    /// folder on `PATH`, since the libraries of PHP and its extensions
+    /// (OpenSSL, ICU, ...) sit there and Windows looks for them only on
+    /// `PATH`; and a `PHP_INI_SCAN_DIR` whose `slopp.ini` sets
+    /// `extension_dir` to this PHP's `ext`, for the extensions php.ini names,
+    /// and mysqli's default port.
+    fn windows_php_env(&self, php_dir: &Path) -> anyhow::Result<Vec<(String, std::ffi::OsString)>> {
+        let layout = &self.layout;
+        let scan_dir = layout.php_scan_dir();
+        std::fs::create_dir_all(&scan_dir)
+            .with_context(|| format!("creating {}", scan_dir.display()))?;
+        let ini = scan_dir.join("slopp.ini");
+        let ini_text = templates::php_scan_ini(&php_dir.join("ext"), self.settings.ports.mysql);
+        std::fs::write(&ini, ini_text).with_context(|| format!("writing {}", ini.display()))?;
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(php_dir.to_path_buf()).chain(std::env::split_paths(&path)),
+        )
+        .unwrap_or(path);
+        Ok(vec![
+            ("PATH".into(), path),
+            ("PHP_INI_SCAN_DIR".into(), scan_dir.into_os_string()),
+        ])
     }
 
     fn start_php_fpm(&self, fpm: &Path) -> anyhow::Result<Tracked> {

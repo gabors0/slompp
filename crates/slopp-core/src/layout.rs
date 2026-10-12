@@ -17,12 +17,13 @@ impl Layout {
     }
 
     /// `$SLOPP_ROOT`, else `slopp` in the data directory
-    /// (`~/.local/share` unless `$XDG_DATA_HOME` says otherwise).
+    /// (`~/.local/share` unless `$XDG_DATA_HOME` says otherwise; on Windows
+    /// the local, not roaming, AppData).
     pub fn default_root() -> PathBuf {
         if let Some(root) = std::env::var_os("SLOPP_ROOT") {
             return root.into();
         }
-        base_dir("XDG_DATA_HOME", ".local/share", dirs::data_dir)
+        base_dir("XDG_DATA_HOME", ".local/share", dirs::data_local_dir)
             .unwrap_or_else(|| PathBuf::from("."))
             .join("slopp")
     }
@@ -120,6 +121,12 @@ impl Layout {
 
     pub fn php_fpm_log(&self) -> PathBuf {
         self.php().join("logs/php-fpm.log")
+    }
+
+    /// Windows: PHP's `PHP_INI_SCAN_DIR`, holding the generated
+    /// `slopp.ini` that says where PHP's extensions are.
+    pub fn php_scan_dir(&self) -> PathBuf {
+        self.run().join("php")
     }
 
     // MariaDB

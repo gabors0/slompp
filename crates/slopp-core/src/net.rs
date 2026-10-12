@@ -276,7 +276,94 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+mod imp {
+    use super::Listener;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, NO_ERROR};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID,
+        TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+
+    use crate::process::win::{Process, QUERY};
+
+    /// The kernel's listening sockets with their owners. Processes of other
+    /// users and the system can't be opened, so they go without a name,
+    /// except the kernel itself: http.sys (IIS, WinRM, ...) listens as PID 4.
+    pub fn listeners() -> Vec<Listener> {
+        let mut sockets = Vec::new();
+        for row in table::<MIB_TCPROW_OWNER_PID>(AF_INET) {
+            // Both in network byte order; the port in the low 16 bits.
+            let ip = Ipv4Addr::from(u32::from_be(row.dwLocalAddr));
+            let port = u16::from_be(row.dwLocalPort as u16);
+            sockets.push((SocketAddr::new(IpAddr::V4(ip), port), row.dwOwningPid));
+        }
+        for row in table::<MIB_TCP6ROW_OWNER_PID>(AF_INET6) {
+            let ip = Ipv6Addr::from(row.ucLocalAddr);
+            let port = u16::from_be(row.dwLocalPort as u16);
+            sockets.push((SocketAddr::new(IpAddr::V6(ip), port), row.dwOwningPid));
+        }
+        sockets
+            .into_iter()
+            .map(|(addr, pid)| Listener {
+                addr,
+                pid: Some(pid),
+                process: process_name(pid),
+            })
+            .collect()
+    }
+
+    /// The rows of `GetExtendedTcpTable`'s listener table for `family`.
+    /// `Row` is the table's row type; the table is a `u32` count followed by
+    /// the rows.
+    fn table<Row: Copy>(family: u16) -> Vec<Row> {
+        let mut size = 0u32;
+        let mut buf: Vec<u64> = Vec::new();
+        // The table can grow between asking for its size and reading it.
+        for _ in 0..4 {
+            // SAFETY: `buf` holds `size` bytes, 8-aligned for the rows.
+            let err = unsafe {
+                GetExtendedTcpTable(
+                    buf.as_mut_ptr().cast(),
+                    &mut size,
+                    0,
+                    u32::from(family),
+                    TCP_TABLE_OWNER_PID_LISTENER,
+                    0,
+                )
+            };
+            match err {
+                NO_ERROR => {
+                    let base = buf.as_ptr().cast::<u8>();
+                    // SAFETY: the API wrote a count then that many rows, the
+                    // rows starting at the row type's alignment.
+                    unsafe {
+                        let count = base.cast::<u32>().read() as usize;
+                        let offset = std::mem::align_of::<Row>().max(4);
+                        let rows = base.add(offset).cast::<Row>();
+                        return (0..count).map(|i| rows.add(i).read()).collect();
+                    }
+                }
+                ERROR_INSUFFICIENT_BUFFER => buf = vec![0; (size as usize).div_ceil(8)],
+                _ => break,
+            }
+        }
+        Vec::new()
+    }
+
+    fn process_name(pid: u32) -> Option<String> {
+        if pid == 4 {
+            return Some("System".to_string());
+        }
+        let image = Process::open(pid, QUERY)?.image()?;
+        Some(image.file_name()?.to_string_lossy().into_owned())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod imp {
     use super::Listener;
 
@@ -286,7 +373,7 @@ mod imp {
     }
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos", windows)))]
 mod tests {
     use super::*;
 

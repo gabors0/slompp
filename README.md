@@ -30,7 +30,8 @@ keep running when the panel closes (unless you change that in Settings).
 
 On Linux SLOPP puts an icon in the system tray (StatusNotifierItem, shown by
 KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
-in the menu bar. Its top lamp is Apache, the middle one MySQL. The menu starts
+in the menu bar. Windows has no tray icon yet, so there closing the window
+quits the panel (the servers keep running). Its top lamp is Apache, the middle one MySQL. The menu starts
 and stops modules and opens the site, phpMyAdmin or Adminer; on Linux a left click
 shows the panel.
 
@@ -43,8 +44,9 @@ second copy, and so does a click on its Dock icon on macOS.
 ## Downloads
 
 [Releases](https://github.com/gabors0/slopp/releases) have builds for Linux
-(x86_64, glibc 2.39 or newer) and macOS (Apple silicon). Install the servers
-first, as below; SLOPP doesn't bundle them.
+(x86_64, glibc 2.39 or newer), macOS (Apple silicon) and Windows (x86_64,
+Windows 10 or newer). Install the servers first, as below; SLOPP doesn't
+bundle them.
 
 - **Linux:** unpack the tarball and run `slopp`, or `sloppctl` from a terminal.
   It needs libxkbcommon, Wayland or X11, and a Vulkan driver, which desktop
@@ -57,6 +59,9 @@ first, as below; SLOPP doesn't bundle them.
   notarized, so macOS blocks the first launch: allow it in System Settings →
   Privacy & Security, or run
   `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
+- **Windows:** unzip and run `slopp.exe`, or `sloppctl.exe` from a terminal.
+  It isn't signed, so SmartScreen may warn the first time: More info → Run
+  anyway.
 
 ## Running it
 
@@ -87,16 +92,36 @@ signed modules, so PHP goes through PHP-FPM there). Homebrew's programs are
 found wherever they are, linked or not, also when SLOPP is started from the
 Dock without your shell's `PATH`. MacPorts' `/opt/local` is searched too.
 
-Linux and macOS are supported. Windows is kept in mind (process handling and
-file opening have per-platform paths) but untested. On macOS the Ports page
+On Windows (new, so expect rough edges), install the 64-bit builds:
+
+- Apache from [Apache Lounge](https://www.apachelounge.com/download/),
+  unpacked to `C:\Apache24` as its readme says.
+- PHP's **Thread Safe** zip from [windows.php.net](https://windows.php.net/download/),
+  unpacked to `C:\php`. Only that build has the Apache module
+  (`php8apache2_4.dll`); Windows has no PHP-FPM.
+- MariaDB from its installer on [mariadb.org](https://mariadb.org/download/).
+  Don't let it set up a Windows service on port 3306, or choose another port
+  in SLOPP.
+
+SLOPP also looks on `PATH`, in Chocolatey's and Scoop's folders,
+`C:\Program Files\MariaDB *` and `C:\xampp`, so an existing XAMPP's Apache,
+PHP and MariaDB work too. Settings → Programs takes explicit paths. PHP loads
+the extensions phpMyAdmin and most frameworks need (`extension=` lines in the
+stack's `php.ini`); SLOPP puts PHP's folder on Apache's `PATH` and points
+`extension_dir` at its `ext` folder when it starts Apache. phpMyAdmin and
+Adminer reach MariaDB over TCP on localhost (MariaDB for Windows has named
+pipes, off by default, instead of a Unix socket).
+
+Linux, macOS and Windows are supported. On macOS the Ports page
 names only your own programs: a port taken by another user's (the system's
 Apache, say) is still reported as in use, without a name.
 
 ## The stack folder
 
 Everything lives in one folder, laid out like XAMPP's
-(default `~/.local/share/slopp`, also on macOS, or `$SLOPP_ROOT`; MariaDB's
-installer needs a path without spaces):
+(default `~/.local/share/slopp`, also on macOS, `%LOCALAPPDATA%\slopp` on
+Windows, or `$SLOPP_ROOT`; on Linux and macOS MariaDB's installer needs a
+path without spaces):
 
 ```
 htdocs/                      your sites (a welcome page on first run)
@@ -154,6 +179,6 @@ sloppctl install-adminer
 - `scripts/bundle-macos.sh`: builds `SLOPP.app`.
 
 Settings are stored in `~/.config/slopp/settings.json` (`$XDG_CONFIG_HOME`
-is honoured on macOS as well).
+is honoured on macOS as well), on Windows in `%APPDATA%\slopp\settings.json`.
 
 Fonts: IBM Plex Sans and IBM Plex Mono (SIL Open Font License).

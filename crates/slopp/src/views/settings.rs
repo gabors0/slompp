@@ -117,6 +117,8 @@ impl SettingsView {
                 s.editor.clone(),
                 if cfg!(target_os = "macos") {
                     "The default text editor (e.g. code, Zed, Sublime Text)"
+                } else if cfg!(windows) {
+                    "The default app, or Notepad (e.g. code, notepad++)"
                 } else {
                     "The desktop's default app (e.g. code, kate, gnome-text-editor)"
                 },
@@ -127,6 +129,8 @@ impl SettingsView {
                 s.terminal.clone(),
                 if cfg!(target_os = "macos") {
                     "Terminal (e.g. iTerm, Ghostty, kitty)"
+                } else if cfg!(windows) {
+                    "Command Prompt (e.g. pwsh, wt)"
                 } else {
                     "Found automatically (e.g. konsole, kitty, gnome-terminal)"
                 },
@@ -448,7 +452,15 @@ impl Render for SettingsView {
                             .child(labelled("Apache (httpd)", &self.httpd, true))
                             .child(labelled("Apache modules folder", &self.apache_modules, true))
                             .child(labelled("PHP-FPM", &self.php_fpm, true))
-                            .child(labelled("PHP Apache module (libphp.so)", &self.php_module, true))
+                            .child(labelled(
+                                if cfg!(windows) {
+                                    "PHP Apache module (php8apache2_4.dll)"
+                                } else {
+                                    "PHP Apache module (libphp.so)"
+                                },
+                                &self.php_module,
+                                true,
+                            ))
                             .child(labelled("MariaDB server (mariadbd)", &self.mariadbd, true)),
                         false,
                     ))

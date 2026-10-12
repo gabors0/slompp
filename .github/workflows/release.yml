@@ -1,5 +1,5 @@
-# Builds SLOPP for Linux and macOS when a version tag is pushed, and publishes
-# the builds as a GitHub release:
+# Builds SLOPP for Linux, macOS and Windows when a version tag is pushed, and
+# publishes the builds as a GitHub release:
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -80,9 +80,32 @@ jobs:
           path: ${{ env.NAME }}.zip
           if-no-files-found: error
 
+  windows:
+    needs: version
+    # Native, not cross-compiled: GPUI's release build compiles its shaders
+    # with fxc from the Windows SDK, which the runner has.
+    runs-on: windows-2025
+    env:
+      NAME: slopp-${{ needs.version.outputs.version }}-windows-x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p slopp -p slopp-core
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:NAME | Out-Null
+          Copy-Item target/release/slopp.exe, target/release/sloppctl.exe, README.md -Destination $env:NAME
+          Compress-Archive -Path $env:NAME -DestinationPath "$env:NAME.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: ${{ env.NAME }}.zip
+          if-no-files-found: error
+
   release:
     if: github.ref_type == 'tag'
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -99,7 +122,9 @@ jobs:
           body: |
             SLOPP runs the stock servers, so install them first: Apache, PHP-FPM
             (or PHP's Apache module) and the MariaDB server from your package
-            manager on Linux, `brew install php mariadb` on macOS.
+            manager on Linux, `brew install php mariadb` on macOS, and on
+            Windows Apache Lounge's Apache, PHP's Thread Safe build and
+            MariaDB's installer (see the README).
 
             **Linux** (x86_64, glibc 2.39 or newer): unpack and run `slopp`, or
             `sloppctl` from a terminal. On NixOS use `nix run` instead.
@@ -108,3 +133,8 @@ jobs:
             /Applications. The app isn't notarized, so macOS blocks the first
             launch: allow it in System Settings → Privacy & Security, or run
             `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
+
+            **Windows** (x86_64, Windows 10 or newer; new, so expect rough
+            edges): unzip and run `slopp.exe`, or `sloppctl.exe` from a
+            terminal. It isn't signed, so SmartScreen may warn on the first
+            launch: More info → Run anyway.

@@ -9,7 +9,8 @@ use anyhow::{Context as _, bail};
 
 /// Opens a file or folder with `editor` (a command line, e.g. `code -n`; on
 /// macOS also an application's name, e.g. `Visual Studio Code`) or the
-/// desktop's default application.
+/// desktop's default application (on Windows Notepad for files that have
+/// none).
 pub fn open_path(path: &Path, editor: Option<&str>) -> anyhow::Result<()> {
     if !path.exists() {
         bail!("{} doesn't exist yet", path.display());
@@ -44,30 +45,84 @@ fn command_or_app(setting: &str) -> Command {
         cmd.args(["-a", setting]);
         return cmd;
     }
-    let mut cmd = Command::new(program);
+    let mut cmd = Command::new(resolve(program));
     cmd.args(words);
     cmd
+}
+
+/// On Windows a command like `code` is often a batch file (`code.cmd`),
+/// which, unlike `.exe`, isn't found without its extension.
+#[cfg(windows)]
+fn resolve(program: &str) -> std::path::PathBuf {
+    let path = Path::new(program);
+    if path.extension().is_some() || path.components().count() > 1 {
+        return path.to_path_buf();
+    }
+    let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    let dirs = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&dirs)
+        .flat_map(|dir| {
+            exts.split(';')
+                .filter(|e| !e.is_empty())
+                .map(move |ext| dir.join(format!("{program}{ext}")))
+        })
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+#[cfg(not(windows))]
+fn resolve(program: &str) -> &str {
+    program
 }
 
 pub fn open_url(url: &str) -> anyhow::Result<()> {
     open_default(OsStr::new(url))
 }
 
+#[cfg(not(windows))]
 fn open_default(target: &OsStr) -> anyhow::Result<()> {
-    let cmd = if cfg!(target_os = "macos") {
-        let mut c = Command::new("open");
-        c.arg(target);
-        c
-    } else if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", ""]).arg(target);
-        c
+    let mut cmd = Command::new(if cfg!(target_os = "macos") {
+        "open"
     } else {
-        let mut c = Command::new("xdg-open");
-        c.arg(target);
-        c
-    };
+        "xdg-open"
+    });
+    cmd.arg(target);
     launch(cmd)
+}
+
+#[cfg(windows)]
+fn open_default(target: &OsStr) -> anyhow::Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::UI::Shell::{SE_ERR_NOASSOC, ShellExecuteW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let file: Vec<u16> = target.encode_wide().chain(Some(0)).collect();
+    let verb = crate::process::win::wide("open");
+    // SAFETY: NUL-terminated strings; the rest may be null.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+    if result > 32 {
+        return Ok(());
+    }
+    // `.conf`, `.cnf` and friends belong to no application.
+    let path = Path::new(target);
+    if result == SE_ERR_NOASSOC as isize && path.is_file() {
+        let mut cmd = Command::new("notepad.exe");
+        cmd.arg(path);
+        return launch(cmd);
+    }
+    bail!(
+        "couldn't open {} (error {result})",
+        target.to_string_lossy()
+    )
 }
 
 /// Terminals tried in order when none is configured.
@@ -89,7 +144,7 @@ const TERMINALS: &[&str] = &[
 
 /// Opens a terminal in `dir` with `env` set (the stack's PATH and MariaDB
 /// socket), like XAMPP's Shell button.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn open_terminal(
     dir: &Path,
     env: &[(String, String)],
@@ -180,15 +235,41 @@ fn default_terminal() -> anyhow::Result<Command> {
     Ok(Command::new(found))
 }
 
+/// Opens a console in `dir` with `env` set (the stack's PATH and MySQL
+/// port), like XAMPP's Shell button: Command Prompt, or `terminal` (e.g.
+/// `pwsh` or `wt`).
+///
+/// `start` gives the terminal a console window of its own; the `cmd` that
+/// runs it has none (see [`launch`]) and passes on the environment and
+/// working directory.
 #[cfg(windows)]
-fn default_terminal() -> anyhow::Result<Command> {
-    let mut c = Command::new("cmd");
-    c.args(["/C", "start", "cmd"]);
-    Ok(c)
+pub fn open_terminal(
+    dir: &Path,
+    env: &[(String, String)],
+    terminal: Option<&str>,
+) -> anyhow::Result<()> {
+    let terminal = terminal
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("cmd");
+    let mut cmd = Command::new("cmd");
+    cmd.args(["/C", "start", ""])
+        .args(terminal.split_whitespace())
+        .current_dir(dir);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    launch(cmd)
 }
 
 /// Starts a program without waiting for it, reaping it in the background.
+/// On Windows a console program (`code.cmd`'s `cmd`) gets no window.
 fn launch(mut cmd: Command) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
