@@ -111,9 +111,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// `$XDG_CONFIG_HOME/slompp/settings.json`.
+    /// `slompp/settings.json` in the config directory (`~/.config` unless
+    /// `$XDG_CONFIG_HOME` says otherwise).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
+        crate::layout::base_dir("XDG_CONFIG_HOME", ".config", dirs::config_dir)
             .unwrap_or_else(|| PathBuf::from("."))
             .join("slompp")
             .join("settings.json")

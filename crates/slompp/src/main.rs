@@ -5,6 +5,8 @@ mod controller;
 #[cfg(unix)]
 mod instance;
 mod log;
+#[cfg(target_os = "macos")]
+mod menus;
 mod panel;
 mod theme;
 mod tray;
@@ -39,50 +41,53 @@ fn main() {
         Err(err) => tracing::warn!("couldn't check for a running SLOMPP: {err:#}"),
     }
 
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::AllAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            // Quitting is decided in on_window_closed: with a tray icon the
-            // app outlives its window.
-            cx.set_quit_mode(QuitMode::Explicit);
-            theme::init(cx);
-            panel::bind_keys(cx);
-            cx.set_global(PanelWindow::default());
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    // macOS: a click on the Dock icon while the window is closed.
+    app.on_reopen(show_panel);
+    app.run(move |cx| {
+        gpui_kit::init(cx);
+        // Quitting is decided in on_window_closed: with a tray icon the
+        // app outlives its window.
+        cx.set_quit_mode(QuitMode::Explicit);
+        theme::init(cx);
+        panel::bind_keys(cx);
+        #[cfg(target_os = "macos")]
+        menus::init(cx);
+        cx.set_global(PanelWindow::default());
 
-            let controller = Controller::init(cx);
-            let state = controller.read(cx).tray_snapshot();
-            match tray::spawn(state, commands.clone()) {
-                Ok(tray) => controller.update(cx, |c, cx| c.set_tray(tray, cx)),
-                Err(err) => tracing::info!("{err:#}; closing the window will quit"),
+        let controller = Controller::init(cx);
+        let state = controller.read(cx).tray_snapshot();
+        match tray::spawn(state, commands.clone()) {
+            Ok(tray) => controller.update(cx, |c, cx| c.set_tray(tray, cx)),
+            Err(err) => tracing::info!("{err:#}; closing the window will quit"),
+        }
+
+        cx.spawn(async move |cx| {
+            while let Ok(command) = inbox.recv().await {
+                cx.update(|cx| handle(command, cx));
             }
+        })
+        .detach();
 
-            cx.spawn(async move |cx| {
-                while let Ok(command) = inbox.recv().await {
-                    cx.update(|cx| handle(command, cx));
-                }
-            })
-            .detach();
-
-            // Closing the window keeps SLOMPP in the tray, if there is one
-            // and Settings allows it; otherwise it quits, like XAMPP's panel.
-            // The servers keep running either way unless Settings says not.
-            cx.on_window_closed(|cx, _| {
-                cx.global_mut::<PanelWindow>().0 = None;
-                let controller = Controller::global(cx);
-                let ctl = controller.read(cx);
-                if !(ctl.has_tray() && ctl.settings().close_to_tray) {
-                    cx.quit();
-                }
-            })
-            .detach();
-            #[cfg(unix)]
-            cx.on_app_quit(|_| async { instance::release() }).detach();
-
-            if std::env::var_os("SLOMPP_HIDDEN").is_none() {
-                show_panel(cx);
+        // Closing the window keeps SLOMPP in the tray, if there is one
+        // and Settings allows it; otherwise it quits, like XAMPP's panel.
+        // The servers keep running either way unless Settings says not.
+        cx.on_window_closed(|cx, _| {
+            cx.global_mut::<PanelWindow>().0 = None;
+            let controller = Controller::global(cx);
+            let ctl = controller.read(cx);
+            if !(ctl.has_tray() && ctl.settings().close_to_tray) {
+                cx.quit();
             }
-        });
+        })
+        .detach();
+        #[cfg(unix)]
+        cx.on_app_quit(|_| async { instance::release() }).detach();
+
+        if std::env::var_os("SLOMPP_HIDDEN").is_none() {
+            show_panel(cx);
+        }
+    });
 }
 
 fn handle(command: TrayCommand, cx: &mut App) {

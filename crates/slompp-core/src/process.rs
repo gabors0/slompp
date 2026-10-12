@@ -12,7 +12,8 @@ use anyhow::Context as _;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tracked {
     pub pid: u32,
-    /// Platform start-time token (Linux: clock ticks since boot), if known.
+    /// Platform start-time token (Linux: clock ticks since boot; macOS:
+    /// microseconds since the epoch), if known.
     pub started: Option<u64>,
 }
 
@@ -53,6 +54,23 @@ pub fn spawn_detached(mut cmd: Command, log: &Path) -> anyhow::Result<Child> {
     {
         use std::os::unix::process::CommandExt as _;
         cmd.process_group(0);
+        // Blocked and ignored signals stay that way across exec, and the
+        // panel starts servers from threads that block most of them (GPUI's
+        // background executor on macOS is Grand Central Dispatch). A server
+        // that never sees SIGTERM can't be stopped: mod_php's Apache workers
+        // outlive their parent and keep the ports.
+        // SAFETY: sigprocmask(2) and signal(2) are async-signal-safe.
+        unsafe {
+            cmd.pre_exec(|| {
+                let mut none = std::mem::zeroed::<libc::sigset_t>();
+                libc::sigemptyset(&mut none);
+                libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+                for signal in DEFAULTED_SIGNALS {
+                    libc::signal(*signal, libc::SIG_DFL);
+                }
+                Ok(())
+            });
+        }
     }
     #[cfg(windows)]
     {
@@ -64,6 +82,19 @@ pub fn spawn_detached(mut cmd: Command, log: &Path) -> anyhow::Result<Child> {
     let program = cmd.get_program().to_string_lossy().into_owned();
     cmd.spawn().with_context(|| format!("starting {program}"))
 }
+
+/// Signals a server starts with the default action for, whatever we ignore.
+#[cfg(unix)]
+const DEFAULTED_SIGNALS: &[libc::c_int] = &[
+    libc::SIGHUP,
+    libc::SIGINT,
+    libc::SIGQUIT,
+    libc::SIGTERM,
+    libc::SIGUSR1,
+    libc::SIGUSR2,
+    libc::SIGALRM,
+    libc::SIGCHLD,
+];
 
 /// Reads `pid starttime` lines. A missing file is no processes.
 pub fn read_pid_file(path: &Path) -> Vec<Tracked> {
@@ -138,7 +169,40 @@ fn is_zombie(pid: u32) -> bool {
     proc_stat(pid).is_some_and(|f| f.first().is_some_and(|s| s == "Z" || s == "X"))
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+/// `proc_pidinfo`'s summary of a process, or the errno it failed with.
+#[cfg(target_os = "macos")]
+fn bsd_info(pid: u32) -> Result<libc::proc_bsdinfo, i32> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is a proc_bsdinfo and `size` is its length.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written == size {
+        // SAFETY: the kernel filled the whole struct.
+        Ok(unsafe { info.assume_init() })
+    } else {
+        Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_zombie(pid: u32) -> bool {
+    match bsd_info(pid) {
+        Ok(info) => info.pbi_status == libc::SZOMB,
+        // kill(2) still sees it but it has no process info left: it exited
+        // and waits to be reaped.
+        Err(errno) => errno == libc::ESRCH,
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn is_zombie(_pid: u32) -> bool {
     false
 }
@@ -150,7 +214,14 @@ fn start_time(pid: u32) -> Option<u64> {
     proc_stat(pid)?.get(19)?.parse().ok()
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: when the process started, in microseconds since the epoch.
+#[cfg(target_os = "macos")]
+fn start_time(pid: u32) -> Option<u64> {
+    let info = bsd_info(pid).ok()?;
+    Some(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn start_time(_pid: u32) -> Option<u64> {
     None
 }
@@ -240,5 +311,69 @@ mod tests {
         assert!(!terminate(&[tracked], Duration::from_secs(5)));
         reaper.join().unwrap().unwrap();
         assert!(!tracked.is_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn children_get_signals_we_block_or_ignore() {
+        // Runs `spawn` on a thread of its own, since the mask is per thread.
+        fn sleeper(prepare: fn()) -> Child {
+            std::thread::spawn(move || {
+                prepare();
+                let dir = tempfile::tempdir().unwrap();
+                let mut cmd = Command::new("sleep");
+                cmd.arg("30");
+                spawn_detached(cmd, &dir.path().join("log")).unwrap()
+            })
+            .join()
+            .unwrap()
+        }
+        fn block_usr1() {
+            // SAFETY: plain sigprocmask(2) on this thread.
+            unsafe {
+                let mut set = std::mem::zeroed::<libc::sigset_t>();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGUSR1);
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            }
+        }
+        fn ignore_usr2() {
+            // SAFETY: plain signal(2); nothing in the tests sends us SIGUSR2.
+            unsafe { libc::signal(libc::SIGUSR2, libc::SIG_IGN) };
+        }
+
+        for (prepare, signal) in [
+            (block_usr1 as fn(), libc::SIGUSR1),
+            (ignore_usr2 as fn(), libc::SIGUSR2),
+        ] {
+            let mut child = sleeper(prepare);
+            // Let the child get past exec.
+            std::thread::sleep(Duration::from_millis(200));
+            // SAFETY: plain kill(2) on our own child.
+            unsafe { libc::kill(child.id() as libc::pid_t, signal) };
+            let started = Instant::now();
+            let status = child.wait().unwrap();
+            assert!(!status.success(), "signal {signal} ended the child");
+            assert!(started.elapsed() < Duration::from_secs(5));
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn knows_start_times_and_zombies() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours = Tracked::of(std::process::id());
+        assert!(ours.started.is_some());
+        assert!(ours.is_alive());
+
+        // Exited but not waited for yet: a zombie, which is not running.
+        let mut child = spawn_detached(Command::new("true"), &dir.path().join("log")).unwrap();
+        let tracked = Tracked::of(child.id());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while tracked.is_alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!tracked.is_alive());
+        child.wait().unwrap();
     }
 }

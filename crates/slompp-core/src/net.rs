@@ -175,7 +175,108 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::Listener;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::process::Command;
+
+    /// macOS has no `/proc`, and `netstat` hides TCP sockets from callers
+    /// that aren't Apple's own programs, so ask `lsof`. Like `/proc/<pid>/fd`
+    /// it only shows this user's processes: a port held by someone else's
+    /// (the system's Apache, say) is still caught by [`super::port_open`],
+    /// just without a name.
+    pub fn listeners() -> Vec<Listener> {
+        let Ok(out) = Command::new("/usr/sbin/lsof")
+            .args(["+c", "0", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pctn"])
+            .output()
+        else {
+            return Vec::new();
+        };
+        let mut sockets = parse_lsof(&String::from_utf8_lossy(&out.stdout));
+        // Forked workers (Apache's) hold the same socket as their parent:
+        // show it once, under the oldest process.
+        sockets.sort_by_key(|(addr, pid, _)| (*addr, *pid));
+        sockets.dedup_by_key(|(addr, ..)| *addr);
+        sockets
+            .into_iter()
+            .map(|(addr, pid, command)| Listener {
+                addr,
+                pid: Some(pid),
+                process: process_name(pid).or(command),
+            })
+            .collect()
+    }
+
+    /// `(address, pid, command)` for each socket in `lsof -F pctn` output:
+    /// one field per line, a `p` line opening each process and an `n` line
+    /// closing each of its sockets.
+    pub(super) fn parse_lsof(text: &str) -> Vec<(SocketAddr, u32, Option<String>)> {
+        let mut sockets = Vec::new();
+        let (mut pid, mut command, mut v6) = (None, None, false);
+        for line in text.lines() {
+            let Some(field) = line.chars().next() else {
+                continue;
+            };
+            let value = &line[field.len_utf8()..];
+            match field {
+                'p' => {
+                    pid = value.parse::<u32>().ok();
+                    command = None;
+                }
+                'c' => command = Some(value.to_string()),
+                't' => v6 = value == "IPv6",
+                'n' => {
+                    if let (Some(pid), Some(addr)) = (pid, parse_addr(value, v6)) {
+                        sockets.push((addr, pid, command.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        sockets
+    }
+
+    /// `127.0.0.1:3306`, `[::1]:3306` or `*:80`.
+    fn parse_addr(text: &str, v6: bool) -> Option<SocketAddr> {
+        let (host, port) = text.rsplit_once(':')?;
+        let port = port.parse().ok()?;
+        let ip = if host == "*" {
+            if v6 {
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED)
+            } else {
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+            }
+        } else {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            // Drop the scope of a link-local address.
+            host.split('%').next()?.parse().ok()?
+        };
+        Some(SocketAddr::new(ip, port))
+    }
+
+    /// The executable's file name, which unlike lsof's command isn't the
+    /// name a program gave itself.
+    fn process_name(pid: u32) -> Option<String> {
+        let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: the buffer is `buf.len()` bytes long.
+        let len = unsafe {
+            libc::proc_pidpath(
+                pid as libc::c_int,
+                buf.as_mut_ptr().cast(),
+                buf.len() as u32,
+            )
+        };
+        if len <= 0 {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
+        let name = std::path::Path::new(&path).file_name()?;
+        Some(name.to_string_lossy().into_owned())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod imp {
     use super::Listener;
 
@@ -185,19 +286,22 @@ mod imp {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     const TCP: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:0277 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 25145 1 0000000000000000 100 0 0 10 0
    1: 0100007F:1F90 0100007F:D2A4 01 00000000:00000000 00:00000000 00000000  1000        0 0 1 0000000000000000 20 4 30 10 -1
 ";
 
+    #[cfg(target_os = "linux")]
     const TCP6: &str = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 00000000000000000000000001000000:0277 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 25146 1 0000000000000000 100 0 0 10 0
 ";
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn parses_listening_sockets_only() {
         let v4 = imp::parse_proc_net_tcp(TCP, false);
@@ -206,12 +310,55 @@ mod tests {
         assert_eq!(v6, vec![("[::1]:631".parse().unwrap(), 25146)]);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn unwraps_nix_program_names() {
         assert_eq!(imp::unwrap_nix_name(".kdeconnectd-wrapped"), "kdeconnectd");
         assert_eq!(imp::unwrap_nix_name(".Discord-wrappe"), "Discord");
         assert_eq!(imp::unwrap_nix_name("httpd"), "httpd");
         assert_eq!(imp::unwrap_nix_name(".hidden"), ".hidden");
+    }
+
+    #[cfg(target_os = "macos")]
+    const LSOF: &str = "p654
+cControlCenter
+f9
+tIPv4
+n*:7000
+f10
+tIPv6
+n*:7000
+p31376
+cnode
+f24
+tIPv4
+n127.0.0.1:7265
+p4242
+cmariadbd
+f30
+tIPv6
+n[::1]:3306
+f31
+tIPv6
+n[fe80::1%lo0]:3307
+";
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parses_lsof_fields() {
+        let listener = |addr: &str, pid, command: &str| {
+            (addr.parse().unwrap(), pid, Some(command.to_string()))
+        };
+        assert_eq!(
+            imp::parse_lsof(LSOF),
+            vec![
+                listener("0.0.0.0:7000", 654, "ControlCenter"),
+                listener("[::]:7000", 654, "ControlCenter"),
+                listener("127.0.0.1:7265", 31376, "node"),
+                listener("[::1]:3306", 4242, "mariadbd"),
+                listener("[fe80::1]:3307", 4242, "mariadbd"),
+            ]
+        );
     }
 
     #[test]
@@ -221,6 +368,7 @@ mod tests {
         assert!(port_open(port));
         let owner = owner_of(port).expect("listener visible");
         assert_eq!(owner.pid, Some(std::process::id()));
+        assert!(owner.process.is_some());
         drop(socket);
         assert!(!port_open(port));
     }

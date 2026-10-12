@@ -1,9 +1,16 @@
-//! The tray icon (StatusNotifierItem over D-Bus, which KDE and most Linux
-//! panels show). Its rack icon has a lamp per module, the tooltip says what
-//! runs where, and the menu starts and stops things without the window.
+//! The tray icon: a StatusNotifierItem over D-Bus on Linux (which KDE and
+//! most panels show), a menu bar item on macOS. Its rack icon has a lamp per
+//! module, the tooltip says what runs where, and the menu starts and stops
+//! things without the window.
 //!
-//! The tray runs on its own thread; menu clicks come back to the app as
-//! [`TrayCommand`]s over a channel.
+//! Menu clicks come back to the app as [`TrayCommand`]s over a channel (on
+//! Linux the tray runs on its own thread).
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::{TrayHandle, spawn};
 
 use slompp_core::Module;
 
@@ -71,6 +78,63 @@ impl TrayState {
     }
 }
 
+/// A line of the tray's menu.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEntry {
+    Item {
+        label: String,
+        enabled: bool,
+        command: TrayCommand,
+    },
+    Separator,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TrayState {
+    /// The menu for this state, the same on every platform.
+    pub fn menu(&self) -> Vec<MenuEntry> {
+        let item = |label: &str, enabled, command| MenuEntry::Item {
+            label: label.to_string(),
+            enabled,
+            command,
+        };
+        let mut menu = Vec::new();
+        for m in &self.modules {
+            let verb = if m.running { "Stop" } else { "Start" };
+            menu.push(item(
+                &format!("{verb} {}", m.module.name()),
+                !m.busy,
+                TrayCommand::Toggle(m.module),
+            ));
+        }
+        let busy = self.modules.iter().any(|m| m.busy);
+        let all = self.modules.iter().all(|m| m.running);
+        let any = self.modules.iter().any(|m| m.running);
+        menu.push(MenuEntry::Separator);
+        menu.push(item("Start all", !busy && !all, TrayCommand::StartAll));
+        menu.push(item("Stop all", !busy && any, TrayCommand::StopAll));
+        menu.push(MenuEntry::Separator);
+        let apache = self.running(Module::Apache);
+        menu.push(item(
+            "Open site",
+            apache && self.site_url.is_some(),
+            TrayCommand::OpenSite,
+        ));
+        if self.phpmyadmin_url.is_some() {
+            menu.push(item(
+                "Open phpMyAdmin",
+                apache && self.running(Module::MySql),
+                TrayCommand::OpenPhpMyAdmin,
+            ));
+        }
+        menu.push(MenuEntry::Separator);
+        menu.push(item("Show panel", true, TrayCommand::ShowPanel));
+        menu.push(item("Quit SLOMPP", true, TrayCommand::Quit));
+        menu
+    }
+}
+
 #[cfg(target_os = "linux")]
 struct SlomppTray {
     state: TrayState,
@@ -118,7 +182,18 @@ impl ksni::Tray for SlomppTray {
         let mysql = self.state.lamp(Module::MySql);
         [16, 22, 24, 32, 48, 64]
             .into_iter()
-            .map(|size| icon::render(size, apache, mysql))
+            .map(|size| {
+                let icon::Pixmap {
+                    width,
+                    height,
+                    data,
+                } = icon::render(size, apache, mysql);
+                ksni::Icon {
+                    width,
+                    height,
+                    data,
+                }
+            })
             .collect()
     }
 
@@ -136,39 +211,18 @@ impl ksni::Tray for SlomppTray {
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        let mut menu = Vec::new();
-        for m in &self.state.modules {
-            let verb = if m.running { "Stop" } else { "Start" };
-            menu.push(item(
-                format!("{verb} {}", m.module.name()),
-                !m.busy,
-                TrayCommand::Toggle(m.module),
-            ));
-        }
-        let busy = self.state.modules.iter().any(|m| m.busy);
-        let all = self.state.modules.iter().all(|m| m.running);
-        let any = self.state.modules.iter().any(|m| m.running);
-        menu.push(ksni::MenuItem::Separator);
-        menu.push(item("Start all", !busy && !all, TrayCommand::StartAll));
-        menu.push(item("Stop all", !busy && any, TrayCommand::StopAll));
-        menu.push(ksni::MenuItem::Separator);
-        let apache = self.state.running(Module::Apache);
-        menu.push(item(
-            "Open site",
-            apache && self.state.site_url.is_some(),
-            TrayCommand::OpenSite,
-        ));
-        if self.state.phpmyadmin_url.is_some() {
-            menu.push(item(
-                "Open phpMyAdmin",
-                apache && self.state.running(Module::MySql),
-                TrayCommand::OpenPhpMyAdmin,
-            ));
-        }
-        menu.push(ksni::MenuItem::Separator);
-        menu.push(item("Show panel", true, TrayCommand::ShowPanel));
-        menu.push(item("Quit SLOMPP", true, TrayCommand::Quit));
-        menu
+        self.state
+            .menu()
+            .into_iter()
+            .map(|entry| match entry {
+                MenuEntry::Item {
+                    label,
+                    enabled,
+                    command,
+                } => item(label, enabled, command),
+                MenuEntry::Separator => ksni::MenuItem::Separator,
+            })
+            .collect()
     }
 }
 
@@ -202,13 +256,20 @@ pub fn spawn(
     Ok(TrayHandle(handle))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 /// The tray icon, drawn in code: three rack units like the panel's mark.
 /// The top lamp is Apache's, the middle one MySQL's.
 pub mod icon {
     use crate::theme::Lamp;
 
     type Rgb = [u8; 3];
+
+    /// Unpremultiplied ARGB32 pixels, a byte per channel in that order.
+    pub struct Pixmap {
+        pub width: i32,
+        pub height: i32,
+        pub data: Vec<u8>,
+    }
 
     const UNIT: Rgb = [0x9B, 0xA3, 0xB3];
     const LAMP_OFF: Rgb = [0x4A, 0x51, 0x60];
@@ -271,8 +332,8 @@ pub mod icon {
         shapes
     }
 
-    /// ARGB32 (network byte order) at `size`×`size`, 4×4 supersampled.
-    pub fn render(size: i32, apache: Lamp, mysql: Lamp) -> ksni::Icon {
+    /// The icon at `size`×`size`, 4×4 supersampled.
+    pub fn render(size: i32, apache: Lamp, mysql: Lamp) -> Pixmap {
         const SS: i32 = 4;
         let shapes = shapes(apache, mysql);
         let scale = 32.0 / size as f32;
@@ -305,7 +366,7 @@ pub mod icon {
                 ]);
             }
         }
-        ksni::Icon {
+        Pixmap {
             width: size,
             height: size,
             data,
@@ -316,7 +377,7 @@ pub mod icon {
     mod tests {
         use super::*;
 
-        fn pixel(icon: &ksni::Icon, x: i32, y: i32) -> [u8; 4] {
+        fn pixel(icon: &Pixmap, x: i32, y: i32) -> [u8; 4] {
             let i = ((y * icon.width + x) * 4) as usize;
             icon.data[i..i + 4].try_into().unwrap()
         }
@@ -335,18 +396,18 @@ pub mod icon {
     }
 }
 
-/// No tray outside Linux yet.
-#[cfg(not(target_os = "linux"))]
+/// No tray on Windows yet.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub struct TrayHandle;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl TrayHandle {
     pub fn set(&self, _: TrayState) {}
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn spawn(_: TrayState, _: async_channel::Sender<TrayCommand>) -> anyhow::Result<TrayHandle> {
-    anyhow::bail!("the tray icon is only available on Linux so far")
+    anyhow::bail!("the tray icon is only available on Linux and macOS so far")
 }
 
 #[cfg(test)]
@@ -377,6 +438,39 @@ mod tests {
         assert_eq!(
             state.summary(),
             "Apache: Running on 8080, 8443\nMySQL: Stopped"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn menu_follows_what_runs() {
+        let entry = |label: &str, enabled, command| MenuEntry::Item {
+            label: label.to_string(),
+            enabled,
+            command,
+        };
+        let state = TrayState {
+            modules: vec![
+                module(Module::Apache, true, "Running", &[8080]),
+                module(Module::MySql, false, "Stopped", &[]),
+            ],
+            site_url: Some("http://localhost:8080/".into()),
+            phpmyadmin_url: None,
+        };
+        assert_eq!(
+            state.menu(),
+            vec![
+                entry("Stop Apache", true, TrayCommand::Toggle(Module::Apache)),
+                entry("Start MySQL", true, TrayCommand::Toggle(Module::MySql)),
+                MenuEntry::Separator,
+                entry("Start all", true, TrayCommand::StartAll),
+                entry("Stop all", true, TrayCommand::StopAll),
+                MenuEntry::Separator,
+                entry("Open site", true, TrayCommand::OpenSite),
+                MenuEntry::Separator,
+                entry("Show panel", true, TrayCommand::ShowPanel),
+                entry("Quit SLOMPP", true, TrayCommand::Quit),
+            ]
         );
     }
 }

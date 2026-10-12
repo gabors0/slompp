@@ -107,6 +107,14 @@ fn detect_httpd(overrides: &Binaries) -> Option<Httpd> {
     });
 
     let mut mime = Vec::new();
+    // Where this httpd was built to look, e.g. Homebrew's etc/httpd.
+    if let Some(types) = info
+        .as_deref()
+        .and_then(|v| parse_define(v, "AP_TYPES_CONFIG_FILE"))
+    {
+        let root = httpd_root.as_deref().unwrap_or("/");
+        mime.push(Path::new(root).join(types));
+    }
     if let Some(root) = &httpd_root {
         mime.push(PathBuf::from(root).join("conf/mime.types"));
     }
@@ -141,9 +149,13 @@ fn detect_php(overrides: &Binaries, httpd: Option<&Httpd>) -> Option<Php> {
         if let Some(prefix) = bin.parent().and_then(Path::parent) {
             libphp.push(prefix.join("modules/libphp.so"));
             libphp.push(prefix.join("lib/apache2/modules/libphp.so"));
+            // Homebrew's php.
+            libphp.push(prefix.join("lib/httpd/modules/libphp.so"));
         }
     }
-    if let Some(dir) = httpd.and_then(|h| h.modules.as_ref())
+    if httpd.is_some_and(|h| !loads_third_party_modules(&h.bin)) {
+        libphp.clear();
+    } else if let Some(dir) = httpd.and_then(|h| h.modules.as_ref())
         && let Ok(entries) = std::fs::read_dir(dir)
     {
         let mut found: Vec<PathBuf> = entries
@@ -178,6 +190,13 @@ fn detect_php(overrides: &Binaries, httpd: Option<&Httpd>) -> Option<Php> {
         handler: PhpHandler::Fpm(fpm),
         version,
     })
+}
+
+/// Whether this httpd takes a `LoadModule` for a module it didn't ship with.
+/// The Apache that comes with macOS refuses modules that aren't code-signed
+/// (Homebrew's `libphp.so` isn't), so PHP goes through PHP-FPM there.
+fn loads_third_party_modules(httpd: &Path) -> bool {
+    !(cfg!(target_os = "macos") && httpd.starts_with("/usr/sbin"))
 }
 
 fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
@@ -217,16 +236,80 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
 
 /// Directories searched after `PATH`: system binaries that are often missing
 /// from a user's `PATH` (Debian keeps `apache2` and `mariadbd` in sbin).
-const EXTRA_DIRS: &[&str] = &["/usr/sbin", "/usr/local/sbin", "/sbin"];
+const SYSTEM_DIRS: &[&str] = &["/usr/sbin", "/usr/local/sbin", "/sbin"];
+
+/// Where Homebrew (Apple silicon, Intel) and MacPorts install.
+#[cfg(target_os = "macos")]
+const PACKAGE_PREFIXES: &[&str] = &["/opt/homebrew", "/usr/local", "/opt/local"];
 
 fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    if cfg!(unix) {
-        dirs.extend(EXTRA_DIRS.iter().map(PathBuf::from));
+    #[cfg(target_os = "macos")]
+    {
+        // An app started from Finder or the Dock gets a bare system PATH, so
+        // add the package managers' directories ourselves.
+        for prefix in PACKAGE_PREFIXES {
+            dirs.push(Path::new(prefix).join("bin"));
+            dirs.push(Path::new(prefix).join("sbin"));
+            dirs.extend(keg_dirs(&Path::new(prefix).join("opt")));
+        }
+        // They go ahead of the Apache that comes with macOS, wherever PATH
+        // had it: the same programs are found from a terminal and the Dock.
+        let (system, mut dirs): (Vec<_>, Vec<_>) = dirs
+            .into_iter()
+            .partition(|d| d == Path::new("/usr/sbin") || d == Path::new("/usr/bin"));
+        dirs.extend(system);
+        dirs.extend(SYSTEM_DIRS.iter().map(PathBuf::from));
+        dirs
     }
-    dirs
+    #[cfg(not(target_os = "macos"))]
+    {
+        if cfg!(unix) {
+            dirs.extend(SYSTEM_DIRS.iter().map(PathBuf::from));
+        }
+        dirs
+    }
+}
+
+/// `bin` and `sbin` of the Homebrew formulae we use that aren't linked into
+/// the prefix: versioned ones like `mariadb@11.8` are "keg-only", and
+/// `mariadb` itself can't be linked next to `mysql`. Unversioned first, then
+/// the newest version.
+#[cfg(target_os = "macos")]
+fn keg_dirs(opt: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(opt) else {
+        return Vec::new();
+    };
+    let mut kegs: Vec<(Vec<u32>, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            Some((keg_version(&name)?, e.path()))
+        })
+        .collect();
+    kegs.sort_by(|a, b| b.0.cmp(&a.0));
+    kegs.into_iter()
+        .flat_map(|(_, keg)| [keg.join("bin"), keg.join("sbin")])
+        .collect()
+}
+
+/// A sort key for `httpd`, `php`, `mariadb` and their `@version` variants;
+/// `None` for any other formula. The unversioned formula sorts highest.
+#[cfg(target_os = "macos")]
+fn keg_version(name: &str) -> Option<Vec<u32>> {
+    let (formula, version) = match name.split_once('@') {
+        Some((formula, version)) => (formula, Some(version)),
+        None => (name, None),
+    };
+    if !["httpd", "php", "mariadb"].contains(&formula) {
+        return None;
+    }
+    match version {
+        None => Some(vec![u32::MAX]),
+        Some(v) => v.split('.').map(|part| part.parse().ok()).collect(),
+    }
 }
 
 fn exe(name: &str) -> String {
@@ -341,6 +424,46 @@ Server MPM:     event
     }
 
     #[test]
+    fn parses_mime_types_define() {
+        let info = " -D HTTPD_ROOT=\"/usr\"\n -D AP_TYPES_CONFIG_FILE=\"/private/etc/apache2/mime.types\"\n";
+        assert_eq!(
+            parse_define(info, "AP_TYPES_CONFIG_FILE").as_deref(),
+            Some("/private/etc/apache2/mime.types")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn orders_homebrew_kegs() {
+        assert_eq!(keg_version("openssl@3"), None);
+        assert_eq!(keg_version("mariadb-connector-c"), None);
+        assert_eq!(keg_version("php@8.4"), Some(vec![8, 4]));
+        assert!(keg_version("mariadb") > keg_version("mariadb@11.8"));
+        assert!(keg_version("mariadb@11.8") > keg_version("mariadb@10.11"));
+
+        let dir = tempfile::tempdir().unwrap();
+        for keg in ["mariadb@10.11", "mariadb@11.8", "mysql", "php"] {
+            std::fs::create_dir_all(dir.path().join(keg)).unwrap();
+        }
+        let dirs = keg_dirs(dir.path());
+        assert_eq!(dirs.len(), 6);
+        assert_eq!(dirs[0], dir.path().join("php/bin"));
+        assert_eq!(dirs[2], dir.path().join("mariadb@11.8/bin"));
+        assert_eq!(dirs[4], dir.path().join("mariadb@10.11/bin"));
+    }
+
+    #[test]
+    fn apples_httpd_gets_php_fpm() {
+        assert_eq!(
+            loads_third_party_modules(Path::new("/usr/sbin/httpd")),
+            !cfg!(target_os = "macos")
+        );
+        assert!(loads_third_party_modules(Path::new(
+            "/opt/homebrew/Cellar/httpd/2.4.69/bin/httpd"
+        )));
+    }
+
+    #[test]
     fn parses_versions() {
         assert_eq!(
             parse_php_version("PHP 8.4.26 (cli) (built: Sep 22 2026) (NTS)\nCopyright").as_deref(),
@@ -350,6 +473,13 @@ Server MPM:     event
             parse_mariadb_version("/usr/bin/mariadbd  Ver 11.4.12-MariaDB for Linux on x86_64")
                 .as_deref(),
             Some("11.4.12")
+        );
+        assert_eq!(
+            parse_mariadb_version(
+                "/opt/homebrew/opt/mariadb@11.8/bin/mariadbd  Ver 11.8.9-MariaDB for osx10.23 on arm64 (Homebrew)"
+            )
+            .as_deref(),
+            Some("11.8.9")
         );
         assert_eq!(
             parse_mariadb_version("mysqld  Ver 8.0.36 for Linux on x86_64 (MySQL)").as_deref(),

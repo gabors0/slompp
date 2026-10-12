@@ -16,12 +16,13 @@ impl Layout {
         Self { root: root.into() }
     }
 
-    /// `$XDG_DATA_HOME/slompp` (or the platform's data directory).
+    /// `$SLOMPP_ROOT`, else `slompp` in the data directory
+    /// (`~/.local/share` unless `$XDG_DATA_HOME` says otherwise).
     pub fn default_root() -> PathBuf {
         if let Some(root) = std::env::var_os("SLOMPP_ROOT") {
             return root.into();
         }
-        dirs::data_dir()
+        base_dir("XDG_DATA_HOME", ".local/share", dirs::data_dir)
             .unwrap_or_else(|| PathBuf::from("."))
             .join("slompp")
     }
@@ -154,7 +155,7 @@ impl Layout {
     }
 
     /// Where Unix sockets go: `tmp/`, unless that path is too long for a
-    /// socket (108 bytes on Linux), then a short per-user, per-root
+    /// socket (108 bytes on Linux, 104 on macOS), then a short per-user, per-root
     /// directory in `/tmp`. Not `$TMPDIR`: the path ends up in config files,
     /// so every process (panel, CLI, dev shell) must agree on it.
     pub fn sockets(&self) -> PathBuf {
@@ -185,6 +186,27 @@ impl Layout {
     pub fn phpmyadmin_config(&self) -> PathBuf {
         self.phpmyadmin().join("config.inc.php")
     }
+}
+
+/// A base directory: `$var` when it is an absolute path, else the
+/// platform's own. macOS gets the XDG default (`under_home`) too rather than
+/// `~/Library/Application Support`: the space in that name breaks
+/// `mariadb-install-db`, and one location keeps the documentation the same
+/// on every Unix.
+pub(crate) fn base_dir(
+    var: &str,
+    under_home: &str,
+    platform: fn() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os(var).map(PathBuf::from)
+        && dir.is_absolute()
+    {
+        return Some(dir);
+    }
+    if cfg!(target_os = "macos") {
+        return dirs::home_dir().map(|home| home.join(under_home));
+    }
+    platform()
 }
 
 /// A hash that stays the same across builds (it ends up in config files).
