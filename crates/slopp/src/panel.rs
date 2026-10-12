@@ -219,7 +219,7 @@ impl Render for Panel {
                         .h_full()
                         .pr_2()
                         .justify_between()
-                        .child(brand::render_nav(this, cx))
+                        .child(brand::render_nav(this, ctl, cx))
                         .child(brand::render_global_actions(ctl, cx)),
                 ),
             )

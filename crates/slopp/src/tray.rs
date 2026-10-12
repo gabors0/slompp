@@ -316,7 +316,7 @@ pub fn spawn(
 /// the panel's other icons, with grey links. A lit lamp is a gradient of its
 /// colour over the unit's right side, fading out towards the middle.
 pub mod icon {
-    use crate::theme::Lamp;
+    use crate::theme::{Lamp, MarkInk};
 
     type Rgb = [u8; 3];
 
@@ -352,47 +352,43 @@ pub mod icon {
             if light { Ink::Black } else { Ink::White }
         }
 
-        fn unit(self) -> Rgb {
+        fn colors(self) -> &'static MarkInk {
             match self {
-                Ink::White => [0xFF, 0xFF, 0xFF],
-                Ink::Black | Ink::Template => [0x00, 0x00, 0x00],
+                Ink::White => &MarkInk::WHITE,
+                Ink::Black | Ink::Template => &MarkInk::BLACK,
             }
+        }
+
+        fn unit(self) -> Rgb {
+            rgb(self.colors().unit)
         }
 
         /// The links' colour and alpha.
         fn link(self) -> (Rgb, f32) {
             match self {
-                Ink::White => ([0xB9, 0xB9, 0xB9], 1.0),
-                Ink::Black => ([0x73, 0x73, 0x73], 1.0),
                 // As dark as the black ink's links on white.
                 Ink::Template => ([0x00, 0x00, 0x00], 0.55),
+                _ => (rgb(self.colors().link), 1.0),
             }
         }
 
         /// A lit lamp's colour.
         fn lamp(self, lamp: Lamp) -> Option<Rgb> {
-            let (on_white, on_black) = match lamp {
-                Lamp::Off => return None,
-                Lamp::Busy => ([0xF4, 0xA0, 0x00], [0xB0, 0x7A, 0x12]),
-                Lamp::On => ([0x14, 0x9A, 0x50], [0x1F, 0x8F, 0x58]),
-                Lamp::Fault => ([0xD9, 0x33, 0x27], [0xC5, 0x37, 0x2B]),
-            };
             match self {
-                Ink::White => Some(on_white),
-                Ink::Black => Some(on_black),
                 Ink::Template => None,
+                _ => self.colors().lamp(lamp).map(rgb),
             }
         }
 
-        /// Where a lamp's gradient becomes solid: at the unit's right edge
-        /// on white units; on black ones 60% of the way across, so the
-        /// colour holds up against the black.
+        /// Where a lamp's gradient becomes solid.
         fn lamp_solid(self) -> f32 {
-            match self {
-                Ink::White | Ink::Template => RIGHT,
-                Ink::Black => RIGHT - 0.6 * (RIGHT - LAMP_CLEAR),
-            }
+            LAMP_CLEAR + self.colors().lamp_solid * (RIGHT - LAMP_CLEAR)
         }
+    }
+
+    fn rgb(hex: u32) -> Rgb {
+        let [_, r, g, b] = hex.to_be_bytes();
+        [r, g, b]
     }
 
     /// Unpremultiplied ARGB32 pixels, a byte per channel in that order.
