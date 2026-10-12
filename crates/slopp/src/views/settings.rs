@@ -1,24 +1,27 @@
-//! Settings: ports, the stack folder, editor and terminal, autostart, and
-//! paths to the server programs when they can't be found automatically.
+//! Settings: ports, the stack folder, editor and terminal, autostart, the
+//! panel's appearance, and paths to the server programs when they can't be
+//! found automatically.
 
 use std::path::PathBuf;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, Entity, EventEmitter, FontWeight, SharedString, Window, div, px,
 };
-use slopp_core::settings::{Binaries, Ports};
+use slopp_core::settings::{Appearance, Binaries, Ports};
 use slopp_core::toolchain::PhpHandler;
 use slopp_core::{Layout, Module, Settings, Stack};
 
 use crate::theme::{self, Palette};
 
 pub enum SettingsEvent {
-    Save(Settings),
+    Save(Box<Settings>),
+    /// Picked in the Appearance group, which applies and saves at once.
+    Appearance(Appearance),
 }
 
 struct Field {
@@ -70,6 +73,7 @@ pub struct SettingsView {
     autostart_mysql: bool,
     stop_on_exit: bool,
     close_to_tray: bool,
+    appearance: Appearance,
     error: Option<String>,
 }
 
@@ -161,6 +165,7 @@ impl SettingsView {
             autostart_mysql: s.autostart.contains(&Module::MySql),
             stop_on_exit: s.stop_on_exit,
             close_to_tray: s.close_to_tray,
+            appearance: s.appearance,
             error: None,
         }
     }
@@ -217,6 +222,7 @@ impl SettingsView {
             autostart,
             stop_on_exit: self.stop_on_exit,
             close_to_tray: self.close_to_tray,
+            appearance: self.appearance,
         })
     }
 
@@ -224,7 +230,7 @@ impl SettingsView {
         match self.collect(cx) {
             Ok(settings) => {
                 self.error = None;
-                cx.emit(SettingsEvent::Save(settings));
+                cx.emit(SettingsEvent::Save(Box::new(settings)));
             }
             Err(err) => self.error = Some(err),
         }
@@ -355,6 +361,27 @@ impl Render for SettingsView {
                 |this, v| this.stop_on_exit = v,
             ));
 
+        // The picked one is filled, like a switch that's on.
+        let appearance = ButtonGroup::new("appearance")
+            .small()
+            .children(Appearance::ALL.map(|a| {
+                let picked = a == self.appearance;
+                Button::new(a.name())
+                    .label(a.name())
+                    .when(picked, |this| this.primary())
+                    .when(!picked, |this| this.outline())
+                    .selected(picked)
+            }))
+            .on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+                if let Some(&a) = clicked.first().and_then(|&i| Appearance::ALL.get(i))
+                    && a != this.appearance
+                {
+                    this.appearance = a;
+                    cx.emit(SettingsEvent::Appearance(a));
+                    cx.notify();
+                }
+            }));
+
         let footer = h_flex()
             .gap_3()
             .py_4()
@@ -407,6 +434,12 @@ impl Render for SettingsView {
                         false,
                     ))
                     .child(section("Startup", "What happens when SLOPP opens and quits.", startup, false))
+                    .child(section(
+                        "Appearance",
+                        "Ayu Dark or Ayu Light, or whichever matches the system. Changes apply right away.",
+                        h_flex().child(appearance),
+                        false,
+                    ))
                     .child(section(
                         "Programs",
                         "SLOPP looks for Apache, PHP and MariaDB on your PATH. Set a path here to use a different one.",

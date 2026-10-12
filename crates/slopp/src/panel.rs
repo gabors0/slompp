@@ -7,6 +7,7 @@ use gpui_kit::{
     App, Context, Entity, FocusHandle, Focusable, KeyBinding, ScrollHandle, Subscription, Window,
     WindowAppearance, actions, div,
 };
+use slopp_core::settings::Appearance;
 
 use crate::controller::{Controller, ControllerEvent};
 use crate::theme::{self, Palette};
@@ -78,7 +79,7 @@ impl Panel {
             }),
             cx.subscribe_in(&settings_view, window, Self::on_settings_event),
             cx.observe_window_appearance(window, |_, window, cx| {
-                theme::apply(wants_light(window.appearance()), cx);
+                apply_theme(window, cx);
                 cx.notify();
             }),
             // A closed window no longer needs the Ports page's polling.
@@ -126,18 +127,34 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let SettingsEvent::Save(settings) = event;
-        let result = self.controller.update(cx, |controller, cx| {
-            controller.apply_settings(settings.clone(), cx)
-        });
-        match result {
-            Ok(()) => {
-                let stack = self.controller.read(cx).stack().clone();
-                self.settings_view
-                    .update(cx, |view, cx| view.reload(&stack, window, cx));
-                window.push_notification(Notification::success("Settings saved"), cx);
+        match event {
+            SettingsEvent::Save(settings) => {
+                let result = self.controller.update(cx, |controller, cx| {
+                    controller.apply_settings(settings.as_ref().clone(), cx)
+                });
+                match result {
+                    Ok(()) => {
+                        let stack = self.controller.read(cx).stack().clone();
+                        self.settings_view
+                            .update(cx, |view, cx| view.reload(&stack, window, cx));
+                        apply_theme(window, cx);
+                        window.push_notification(Notification::success("Settings saved"), cx);
+                    }
+                    Err(text) => window.push_notification(Notification::error(text), cx),
+                }
             }
-            Err(text) => window.push_notification(Notification::error(text), cx),
+            // Saved on its own, leaving the rest of the form as it is.
+            SettingsEvent::Appearance(appearance) => {
+                let mut settings = self.controller.read(cx).settings().clone();
+                settings.appearance = *appearance;
+                let result = self
+                    .controller
+                    .update(cx, |controller, cx| controller.apply_settings(settings, cx));
+                match result {
+                    Ok(()) => apply_theme(window, cx),
+                    Err(text) => window.push_notification(Notification::error(text), cx),
+                }
+            }
         }
     }
 }
@@ -153,16 +170,37 @@ pub fn on_controller<E: ?Sized + 'static>(
     })
 }
 
-/// Follows the system, unless `SLOPP_THEME=light|dark` says otherwise.
-pub fn wants_light(appearance: WindowAppearance) -> bool {
+/// `SLOPP_THEME=light|dark`, which overrides the system and the setting.
+fn theme_override() -> Option<bool> {
     match std::env::var("SLOPP_THEME").as_deref() {
-        Ok("light") => true,
-        Ok("dark") => false,
-        _ => matches!(
-            appearance,
-            WindowAppearance::Light | WindowAppearance::VibrantLight
-        ),
+        Ok("light") => Some(true),
+        Ok("dark") => Some(false),
+        _ => None,
     }
+}
+
+/// Whether the system is in light mode, unless `SLOPP_THEME` says otherwise.
+pub fn system_light(appearance: WindowAppearance) -> bool {
+    theme_override().unwrap_or(matches!(
+        appearance,
+        WindowAppearance::Light | WindowAppearance::VibrantLight
+    ))
+}
+
+/// Whether the panel is light: the Appearance setting, which may follow the
+/// system.
+pub fn wants_light(appearance: WindowAppearance, setting: Appearance) -> bool {
+    match setting {
+        Appearance::System => system_light(appearance),
+        Appearance::Dark => theme_override().unwrap_or(false),
+        Appearance::Light => theme_override().unwrap_or(true),
+    }
+}
+
+/// Restyles the app for the window's appearance and the setting.
+pub fn apply_theme(window: &Window, cx: &mut App) {
+    let setting = Controller::global(cx).read(cx).settings().appearance;
+    theme::apply(wants_light(window.appearance(), setting), cx);
 }
 
 impl Focusable for Panel {
