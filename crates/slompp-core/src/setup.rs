@@ -128,6 +128,18 @@ pub fn init_mysql(layout: &Layout, mariadb: &MariaDb) -> anyhow::Result<()> {
     let Some(install_db) = &mariadb.install_db else {
         bail!("mariadb-install-db was not found, so the database can't be created");
     };
+    // mariadb-install-db is a shell script that splits its paths on spaces.
+    if layout
+        .root()
+        .to_string_lossy()
+        .contains(char::is_whitespace)
+    {
+        bail!(
+            "MariaDB can't create its database under {}: the path contains a space. \
+             Choose a stack folder without one in Settings.",
+            layout.root().display()
+        );
+    }
     std::fs::create_dir_all(layout.mysql_data())?;
     let mut cmd = Command::new(install_db);
     cmd.arg(format!("--defaults-file={}", layout.my_cnf().display()))

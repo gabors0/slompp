@@ -111,13 +111,21 @@ impl SettingsView {
             ),
             editor: Field::new(
                 s.editor.clone(),
-                "The desktop's default app (e.g. code, kate, gnome-text-editor)",
+                if cfg!(target_os = "macos") {
+                    "The default text editor (e.g. code, Zed, Sublime Text)"
+                } else {
+                    "The desktop's default app (e.g. code, kate, gnome-text-editor)"
+                },
                 window,
                 cx,
             ),
             terminal: Field::new(
                 s.terminal.clone(),
-                "Found automatically (e.g. konsole, kitty, gnome-terminal)",
+                if cfg!(target_os = "macos") {
+                    "Terminal (e.g. iTerm, Ghostty, kitty)"
+                } else {
+                    "Found automatically (e.g. konsole, kitty, gnome-terminal)"
+                },
                 window,
                 cx,
             ),
@@ -330,7 +338,11 @@ impl Render for SettingsView {
             ))
             .child(toggle(
                 "close-to-tray",
-                "Keep SLOMPP in the system tray when its window closes",
+                if cfg!(target_os = "macos") {
+                    "Keep SLOMPP in the menu bar when its window closes"
+                } else {
+                    "Keep SLOMPP in the system tray when its window closes"
+                },
                 self.close_to_tray,
                 cx,
                 |this, v| this.close_to_tray = v,

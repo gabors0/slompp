@@ -20,15 +20,16 @@ keep running when the panel closes (unless you change that in Settings).
 ## Tray icon
 
 On Linux SLOMPP puts an icon in the system tray (StatusNotifierItem, shown by
-KDE Plasma and most panels; GNOME needs the AppIndicator extension). Its top
-lamp is Apache, the middle one MySQL. The menu starts and stops modules and
-opens the site or phpMyAdmin; a left click shows the panel.
+KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
+in the menu bar. Its top lamp is Apache, the middle one MySQL. The menu starts
+and stops modules and opens the site or phpMyAdmin; on Linux a left click
+shows the panel.
 
 With a tray, closing the window keeps SLOMPP running there (Settings →
 Startup turns that off); without one, closing the window quits. Launching
 SLOMPP again while it runs brings its window back instead of starting a
-second copy. `SLOMPP_HIDDEN=1 slompp` starts it in the tray only, e.g. for
-login autostart.
+second copy, and so does a click on its Dock icon on macOS.
+`SLOMPP_HIDDEN=1 slompp` starts it in the tray only, e.g. for login autostart.
 
 ## Running it
 
@@ -39,19 +40,36 @@ nix run                      # the panel, with Apache, PHP and MariaDB on PATH
 nix develop -c cargo run -p slompp
 ```
 
-Elsewhere, install Apache, PHP-FPM (or PHP's Apache module) and the MariaDB
-server with your package manager, then `cargo run -p slompp`. SLOMPP looks
-for them on `PATH` and in the usual system locations; Settings → Programs
-takes explicit paths.
+On other Linux distributions, install Apache, PHP-FPM (or PHP's Apache
+module) and the MariaDB server with your package manager, then
+`cargo run -p slompp`. SLOMPP looks for them on `PATH` and in the usual
+system locations; Settings → Programs takes explicit paths.
 
-Linux is the supported platform for now. The code keeps macOS and Windows in
-mind (process handling and file opening have per-platform paths), but they
-are untested and the Ports page lists sockets on Linux only.
+On macOS, with [Homebrew](https://brew.sh) and Xcode (GPUI compiles Metal
+shaders):
+
+```sh
+brew install rust php mariadb     # mariadb@11.8 instead if you keep Homebrew's mysql
+cargo run -p slompp
+scripts/bundle-macos.sh           # or build target/release/SLOMPP.app for /Applications
+```
+
+Apache comes with macOS; `brew install httpd` gets a newer one, which SLOMPP
+prefers and which runs PHP as mod_php like XAMPP (Apple's Apache only loads
+signed modules, so PHP goes through PHP-FPM there). Homebrew's programs are
+found wherever they are, linked or not, also when SLOMPP is started from the
+Dock without your shell's `PATH`. MacPorts' `/opt/local` is searched too.
+
+Linux and macOS are supported. Windows is kept in mind (process handling and
+file opening have per-platform paths) but untested. On macOS the Ports page
+names only your own programs: a port taken by another user's (the system's
+Apache, say) is still reported as in use, without a name.
 
 ## The stack folder
 
 Everything lives in one folder, laid out like XAMPP's
-(default `~/.local/share/slompp`, or `$SLOMPP_ROOT`):
+(default `~/.local/share/slompp`, also on macOS, or `$SLOMPP_ROOT`; MariaDB's
+installer needs a path without spaces):
 
 ```
 htdocs/                      your sites (a welcome page on first run)
@@ -72,8 +90,8 @@ touch your edits.
 Like XAMPP, MariaDB's `root` user has no password and phpMyAdmin logs in as
 root. Both only listen on localhost; don't expose this stack to a network.
 
-Ports default to XAMPP's 80/443/3306 where the user may bind them, otherwise
-8080/8443/3306.
+Ports default to XAMPP's 80/443/3306 where the user may bind them (always on
+macOS), otherwise 8080/8443/3306.
 
 ## From a terminal
 
@@ -96,7 +114,9 @@ slomppctl install-phpmyadmin
   (`stack`, `process`), lists listening ports (`net`), installs phpMyAdmin,
   and the `slomppctl` binary.
 - `crates/slompp`: the GPUI panel and the tray icon.
+- `scripts/bundle-macos.sh`: builds `SLOMPP.app`.
 
-Settings are stored in `~/.config/slompp/settings.json`.
+Settings are stored in `~/.config/slompp/settings.json` (`$XDG_CONFIG_HOME`
+is honoured on macOS as well).
 
 Fonts: IBM Plex Sans and IBM Plex Mono (SIL Open Font License).

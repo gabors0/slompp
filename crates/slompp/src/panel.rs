@@ -29,11 +29,12 @@ const CONTEXT: &str = "Panel";
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-q", Quit, None),
-        KeyBinding::new("ctrl-1", ShowModules, Some(CONTEXT)),
-        KeyBinding::new("ctrl-2", ShowPorts, Some(CONTEXT)),
-        KeyBinding::new("ctrl-3", ShowSettings, Some(CONTEXT)),
-        KeyBinding::new("ctrl-,", ShowSettings, Some(CONTEXT)),
+        // "secondary" is Cmd on macOS and Ctrl everywhere else.
+        KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new("secondary-1", ShowModules, Some(CONTEXT)),
+        KeyBinding::new("secondary-2", ShowPorts, Some(CONTEXT)),
+        KeyBinding::new("secondary-3", ShowSettings, Some(CONTEXT)),
+        KeyBinding::new("secondary-,", ShowSettings, Some(CONTEXT)),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
