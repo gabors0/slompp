@@ -4,14 +4,22 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # The tag must match the workspace version in Cargo.toml. "Run workflow" in the
-# Actions tab builds the chosen branch without releasing it; the builds are
-# then attached to the run as artifacts.
+# Actions tab builds the chosen branch without releasing it, for all platforms
+# or one; the builds are then attached to the run as artifacts. From a shell:
+#
+#   gh workflow run release.yml --ref <branch> -f platforms=windows
 name: Release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms to build
+        type: choice
+        options: [all, linux, macos, windows]
+        default: all
 
 permissions:
   contents: read
@@ -34,6 +42,8 @@ jobs:
 
   linux:
     needs: version
+    # A tag builds everything (no inputs, so 'all').
+    if: contains(fromJSON('["all", "linux"]'), inputs.platforms || 'all')
     # The binaries need the glibc of the build machine or newer (2.39 here).
     runs-on: ubuntu-24.04
     env:
@@ -65,6 +75,7 @@ jobs:
 
   macos:
     needs: version
+    if: contains(fromJSON('["all", "macos"]'), inputs.platforms || 'all')
     runs-on: macos-15
     env:
       NAME: slopp-${{ needs.version.outputs.version }}-macos-arm64
@@ -82,6 +93,7 @@ jobs:
 
   windows:
     needs: version
+    if: contains(fromJSON('["all", "windows"]'), inputs.platforms || 'all')
     # Native, not cross-compiled: GPUI's release build compiles its shaders
     # with fxc from the Windows SDK, which the runner has.
     runs-on: windows-2025
