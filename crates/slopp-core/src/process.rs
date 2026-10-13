@@ -627,9 +627,13 @@ mod tests {
     #[test]
     fn kills_a_detached_process_tree() {
         let dir = tempfile::tempdir().unwrap();
-        // cmd, and the sleeper as its child.
+        use std::os::windows::process::CommandExt as _;
+
+        // cmd, and the sleeper as its child. Raw, since cmd doesn't read the
+        // \" that Rust's quoting turns the inner quotes into; /S strips just
+        // the outer pair.
         let mut cmd = Command::new("cmd");
-        cmd.args(["/C", &sleeper_command()]);
+        cmd.raw_arg(format!("/S /C \"{}\"", sleeper_command()));
         let mut child = spawn_detached(cmd, &dir.path().join("log")).unwrap();
         let tracked = Tracked::of(child.id());
         assert!(tracked.is_alive());
