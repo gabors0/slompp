@@ -24,10 +24,13 @@ pub fn mark(apache: Lamp, mysql: Lamp) -> Div {
     const LINK: f32 = WIDTH * 112. / 428.;
     const LAMP: f32 = WIDTH * 285. / 428.;
     let ink = Palette::mark();
-    let link = |left: f32, top_unit: f32| {
+    // Each link is pinned to the edge it shares with the units, so it ends
+    // where they do once fractional scales round the edges.
+    let link = |right: bool, top_unit: f32| {
         div()
             .absolute()
-            .left(px(left))
+            .when(right, |this| this.right_0())
+            .when(!right, |this| this.left_0())
             .top(px(top_unit * (UNIT + GAP) + UNIT / 2.))
             .w(px(LINK))
             .h(px(UNIT + GAP))
@@ -62,8 +65,8 @@ pub fn mark(apache: Lamp, mysql: Lamp) -> Div {
     v_flex()
         .relative()
         .gap(px(GAP))
-        .child(link(0., 0.))
-        .child(link(WIDTH - LINK, 1.))
+        .child(link(false, 0.))
+        .child(link(true, 1.))
         .child(unit(apache))
         .child(unit(mysql))
         .child(unit(Lamp::Off))
