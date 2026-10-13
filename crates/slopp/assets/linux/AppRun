@@ -1,0 +1,8 @@
+#!/bin/sh
+# The AppImage's entry point. It picks the program by the name it was
+# started as, so a symlink to the AppImage named sloppctl runs sloppctl.
+here="$(dirname "$(readlink -f "$0")")"
+case "$(basename "${ARGV0:-$0}")" in
+    sloppctl*) exec "$here/usr/bin/sloppctl" "$@" ;;
+esac
+exec "$here/usr/bin/slopp" "$@"

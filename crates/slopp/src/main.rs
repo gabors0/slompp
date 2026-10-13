@@ -5,6 +5,8 @@
 // the log.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod appimage;
 mod controller;
 mod instance;
 mod log;
@@ -41,6 +43,9 @@ fn main() {
         Ok(instance::Instance::Primary(listener)) => instance::serve(listener, commands.clone()),
         Err(err) => tracing::warn!("couldn't check for a running SLOPP: {err:#}"),
     }
+
+    #[cfg(target_os = "linux")]
+    appimage::integrate();
 
     let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     // macOS: a click on the Dock icon while the window is closed.
@@ -122,6 +127,8 @@ fn show_panel(cx: &mut App) {
         window_min_size: Some(size(px(900.), px(520.))),
         window_decorations: Some(WindowDecorations::Client),
         app_id: Some("org.slopp.Slopp".into()),
+        #[cfg(target_os = "linux")]
+        icon: x11_icon(),
         titlebar: Some(TitlebarOptions {
             title: Some("SLOPP".into()),
             ..TitleBar::title_bar_options()
@@ -137,5 +144,19 @@ fn show_panel(cx: &mut App) {
             cx.activate(true);
         }
         Err(err) => tracing::error!("couldn't open the window: {err:#}"),
+    }
+}
+
+/// The window's icon on X11, for taskbars that show the window's own icon
+/// rather than its desktop file's (Wayland has only the latter).
+#[cfg(target_os = "linux")]
+fn x11_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    const PNG: &[u8] = include_bytes!("../assets/linux/org.slopp.Slopp.png");
+    match image::load_from_memory_with_format(PNG, image::ImageFormat::Png) {
+        Ok(icon) => Some(std::sync::Arc::new(icon.into_rgba8())),
+        Err(err) => {
+            tracing::warn!("couldn't decode the window icon: {err}");
+            None
+        }
     }
 }
