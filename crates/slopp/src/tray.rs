@@ -1,5 +1,6 @@
 //! The tray icon: a StatusNotifierItem over D-Bus on Linux (which KDE and
-//! most panels show), a menu bar item on macOS. Its rack icon has a lamp per
+//! most panels show), a menu bar item on macOS, a notification area icon on
+//! Windows. Its rack icon has a lamp per
 //! module, the tooltip says what runs where, and the menu starts and stops
 //! things without the window.
 //!
@@ -11,6 +12,12 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{TrayHandle, spawn};
+
+#[cfg(windows)]
+mod windows;
+
+#[cfg(windows)]
+pub use windows::{TrayHandle, spawn};
 
 use slopp_core::{DbAdmin, Module};
 
@@ -79,8 +86,26 @@ impl TrayState {
     }
 }
 
+/// `text` in a fixed UTF-16 buffer with room for a terminating NUL, cut at
+/// a character boundary if it's too long (the Windows tooltip's 128).
+#[cfg(any(windows, test))]
+pub fn utf16_fit<const N: usize>(text: &str) -> [u16; N] {
+    let mut buf = [0u16; N];
+    let mut len = 0;
+    for c in text.chars() {
+        let mut units = [0u16; 2];
+        let units = c.encode_utf16(&mut units);
+        if len + units.len() >= N {
+            break;
+        }
+        buf[len..len + units.len()].copy_from_slice(units);
+        len += units.len();
+    }
+    buf
+}
+
 /// What sits in front of a menu item's label.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuIcon {
     /// A module's lamp, as a dot of its colour (a ring while it's off).
@@ -94,7 +119,7 @@ pub enum MenuIcon {
 }
 
 /// A line of the tray's menu.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry {
     Item {
@@ -106,7 +131,7 @@ pub enum MenuEntry {
     Separator,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 impl TrayState {
     /// The menu for this state, the same on every platform.
     pub fn menu(&self) -> Vec<MenuEntry> {
@@ -175,8 +200,13 @@ impl TrayState {
 /// colour scheme is. Desktops don't tell tray icons, and the panel mostly
 /// follows the colour scheme, except: GNOME's top bar is always dark, and a
 /// Plasma style other than the default one (Breeze, which follows the
-/// colour scheme) can be dark or light on its own.
+/// colour scheme) can be dark or light on its own. Windows sets the
+/// taskbar's mode apart from the apps' and says which it is.
 pub fn light_panel(light_scheme: bool) -> bool {
+    #[cfg(windows)]
+    if let Some(light) = windows::taskbar_light() {
+        return light;
+    }
     #[cfg(target_os = "linux")]
     {
         let desktops = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
@@ -377,7 +407,7 @@ pub fn spawn(
     Ok(TrayHandle(handle))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 /// The tray icon, drawn in code: SLOPP's mark, three rack units joined into
 /// an S by a link on the left (top to middle) and one on the right (middle
 /// to bottom). The top unit's lamp is Apache's, the middle one's MySQL's.
@@ -643,6 +673,26 @@ pub mod icon {
         }
     }
 
+    #[cfg(any(windows, test))]
+    impl Pixmap {
+        /// The pixels as Windows bitmaps hold them: blue, green, red,
+        /// alpha. Icons take straight alpha, menu item bitmaps premultiplied.
+        pub fn bgra(&self, premultiplied: bool) -> Vec<u8> {
+            let mut out = Vec::with_capacity(self.data.len());
+            for &[a, r, g, b] in self.data.as_chunks::<4>().0 {
+                let c = |c: u8| {
+                    if premultiplied {
+                        (u16::from(c) * u16::from(a) / 255) as u8
+                    } else {
+                        c
+                    }
+                };
+                out.extend_from_slice(&[c(b), c(g), c(r), a]);
+            }
+            out
+        }
+    }
+
     #[cfg(any(target_os = "linux", test))]
     impl Pixmap {
         /// The picture as a PNG file, which is how menu items over D-Bus
@@ -810,18 +860,18 @@ pub mod icon {
     }
 }
 
-/// No tray on Windows yet.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// No tray elsewhere.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub struct TrayHandle;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 impl TrayHandle {
     pub fn set(&self, _: TrayState) {}
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn spawn(_: TrayState, _: async_channel::Sender<TrayCommand>) -> anyhow::Result<TrayHandle> {
-    anyhow::bail!("the tray icon is only available on Linux and macOS so far")
+    anyhow::bail!("the tray icon is only available on Linux, macOS and Windows")
 }
 
 #[cfg(test)]
@@ -855,6 +905,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tooltips_fit_their_buffer() {
+        let tip: [u16; 8] = utf16_fit("SLOPP\nApache");
+        assert_eq!(String::from_utf16_lossy(&tip[..7]), "SLOPP\nA");
+        assert_eq!(tip[7], 0);
+        // A character that takes two units isn't split.
+        let tip: [u16; 4] = utf16_fit("ab😀");
+        assert_eq!(tip, [u16::from(b'a'), u16::from(b'b'), 0, 0]);
+    }
+
+    #[test]
+    fn windows_bitmaps_are_bgra() {
+        let pixmap = icon::Pixmap {
+            width: 2,
+            height: 1,
+            data: vec![255, 10, 20, 30, 128, 200, 100, 50],
+        };
+        assert_eq!(pixmap.bgra(false), [30, 20, 10, 255, 50, 100, 200, 128]);
+        assert_eq!(pixmap.bgra(true), [30, 20, 10, 255, 25, 50, 100, 128]);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn plasma_styles_named_dark_or_light() {
@@ -863,7 +934,7 @@ mod tests {
         assert_eq!(plasma_style_is_light("default"), None);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[test]
     fn menu_follows_what_runs() {
         let entry = |label: &str, icon, enabled, command| MenuEntry::Item {

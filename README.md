@@ -30,10 +30,11 @@ keep running when the panel closes (unless you change that in Settings).
 
 On Linux SLOPP puts an icon in the system tray (StatusNotifierItem, shown by
 KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
-in the menu bar. Windows has no tray icon yet, so there closing the window
-quits the panel (the servers keep running). Its top lamp is Apache, the middle one MySQL. The menu starts
-and stops modules and opens the site, phpMyAdmin or Adminer; on Linux a left click
-shows the panel.
+in the menu bar, on Windows in the notification area (Windows 11 first puts
+new icons behind the ^ arrow; drag it onto the taskbar to keep it in view).
+Its top lamp is Apache, the middle one MySQL. The menu starts and stops
+modules and opens the site, phpMyAdmin or Adminer; on Linux and Windows a
+left click shows the panel (the menu is on the right button on Windows).
 
 With a tray, closing the window keeps SLOPP running there (Settings →
 Startup turns that off); without one, closing the window quits. Launching

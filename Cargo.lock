@@ -6301,6 +6301,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uds_windows",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
