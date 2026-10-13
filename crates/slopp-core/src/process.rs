@@ -644,26 +644,41 @@ mod tests {
         };
         assert!(!stale.is_alive());
 
+        // The sleeper is the descendant running this test binary. cmd may
+        // have another child: a console program started without a window
+        // gets a conhost.exe of its own (not under Wine).
+        let exe = std::env::current_exe().unwrap();
+        let is_sleeper = |pid: &u32| {
+            win::Process::open(*pid, win::QUERY)
+                .and_then(|p| p.image())
+                .and_then(|image| Some(image.file_name()? == exe.file_name()?))
+                .unwrap_or(false)
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut tree = win::tree(tracked.pid);
-        while tree.len() < 2 && Instant::now() < deadline {
+        while !tree[1..].iter().any(is_sleeper) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
             tree = win::tree(tracked.pid);
         }
-        assert_eq!(tree.len(), 2, "cmd and its child");
-        let grandchild = Tracked::of(tree[1]);
+        assert!(tree[1..].iter().any(is_sleeper), "no sleeper in {tree:?}");
+        let descendants: Vec<Tracked> = tree[1..].iter().map(|&pid| Tracked::of(pid)).collect();
 
-        // Neither has a shutdown event to ask: both are killed right away.
+        // None has a shutdown event to ask: all are killed right away.
         let asked = Instant::now();
         assert!(terminate(&[tracked], Duration::from_secs(20)));
         assert!(asked.elapsed() < Duration::from_secs(5));
         child.wait().unwrap();
         assert!(!tracked.is_alive());
         let deadline = Instant::now() + Duration::from_secs(5);
-        while grandchild.is_alive() && Instant::now() < deadline {
+        while descendants.iter().any(Tracked::is_alive) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(!grandchild.is_alive());
+        let alive: Vec<u32> = descendants
+            .iter()
+            .filter(|t| t.is_alive())
+            .map(|t| t.pid)
+            .collect();
+        assert!(alive.is_empty(), "still running: {alive:?}");
     }
 
     #[cfg(windows)]
