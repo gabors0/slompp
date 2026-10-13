@@ -82,7 +82,11 @@ fn main() {
             }
         })
         .detach();
-        cx.on_app_quit(|_| async { instance::release() }).detach();
+        cx.on_app_quit(|cx| {
+            Controller::global(cx).update(cx, |c, _| c.remove_tray());
+            async { instance::release() }
+        })
+        .detach();
 
         if std::env::var_os("SLOPP_HIDDEN").is_none() {
             show_panel(cx);

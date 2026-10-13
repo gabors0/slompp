@@ -215,6 +215,12 @@ impl Controller {
         self.tray.is_some()
     }
 
+    /// Takes the icon away, as the app quits: on Windows it would otherwise
+    /// linger on the taskbar until the mouse passes over it.
+    pub fn remove_tray(&mut self) {
+        self.tray = None;
+    }
+
     pub fn set_tray(&mut self, tray: TrayHandle, cx: &mut Context<Self>) {
         self.tray = Some(tray);
         self.tray_state = None;
