@@ -64,7 +64,8 @@ bundle them.
 - **NixOS:** the release binaries won't find their libraries; use the flake
   instead, which also puts Apache, PHP and MariaDB on `PATH`:
   `nix run github:gabors0/slopp`, or
-  `nix profile install github:gabors0/slopp` to keep it.
+  `nix profile install github:gabors0/slopp` to keep it. The AppImage runs
+  with `appimage-run`, and its applications entry then starts it that way.
 - **macOS:** open the dmg and drag `SLOPP.app` to Applications. The app
   isn't notarized, so macOS blocks the first launch: allow it in System
   Settings → Privacy & Security (Open Anyway), or run

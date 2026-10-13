@@ -5,6 +5,11 @@
 //! icon beside it in the hicolor theme, pointing at the AppImage. A moved
 //! AppImage updates them on its next launch.
 //!
+//! There's no `TryExec`: GLib and KDE drop an entry whose `TryExec` isn't
+//! executable, and NixOS's `appimage-run` runs AppImages that aren't. When
+//! that started SLOPP, the entry starts it the same way, since NixOS can't
+//! run an AppImage by itself.
+//!
 //! Skipped when the desktop already knows SLOPP: a desktop file of that name
 //! that SLOPP didn't write (a package, or one the user wrote), or one that
 //! AppImageLauncher, Gear Lever and the like wrote for this AppImage. Also
@@ -29,10 +34,23 @@ pub fn integrate() {
         return;
     };
     std::thread::spawn(move || {
-        if let Err(err) = integrate_into(&appimage, &data, &system_data_dirs()) {
+        let launcher = launcher();
+        if let Err(err) = integrate_into(&appimage, launcher, &data, &system_data_dirs()) {
             tracing::warn!("couldn't add SLOPP to the desktop's applications: {err}");
         }
     });
+}
+
+/// `appimage-run` if it started this AppImage (it unpacks them into its
+/// cache folder, `$APPDIR`) and is on `PATH`. Without it on `PATH` NixOS is
+/// probably set up to run AppImages directly (`programs.appimage.binfmt`).
+fn launcher() -> Option<&'static str> {
+    const APPIMAGE_RUN: &str = "appimage-run";
+    let appdir = PathBuf::from(std::env::var_os("APPDIR")?);
+    let unpacked_by_it = appdir.components().any(|c| c.as_os_str() == APPIMAGE_RUN);
+    let path = std::env::var_os("PATH")?;
+    let on_path = std::env::split_paths(&path).any(|dir| dir.join(APPIMAGE_RUN).is_file());
+    (unpacked_by_it && on_path).then_some(APPIMAGE_RUN)
 }
 
 fn system_data_dirs() -> Vec<PathBuf> {
@@ -43,11 +61,19 @@ fn system_data_dirs() -> Vec<PathBuf> {
     std::env::split_paths(&dirs).collect()
 }
 
-fn integrate_into(appimage: &Path, data: &Path, system: &[PathBuf]) -> io::Result<()> {
+fn integrate_into(
+    appimage: &Path,
+    launcher: Option<&str>,
+    data: &Path,
+    system: &[PathBuf],
+) -> io::Result<()> {
     if data.join("appimagekit/no_desktopintegration").exists() {
         return Ok(());
     }
-    let Some(entry) = appimage.to_str().and_then(desktop_entry) else {
+    let Some(entry) = appimage
+        .to_str()
+        .and_then(|path| desktop_entry(path, launcher))
+    else {
         return Ok(());
     };
     let applications = data.join("applications");
@@ -98,15 +124,18 @@ fn integrated_elsewhere(applications: &Path, ours: &Path, appimage: &Path) -> bo
     })
 }
 
-/// The bundled desktop file, launching the AppImage at `path`.
-fn desktop_entry(path: &str) -> Option<String> {
-    let exec = exec_quote(path)?;
-    // TryExec is a plain string: only the backslash is escaped.
-    let try_exec = path.replace('\\', "\\\\");
+/// The bundled desktop file, launching the AppImage at `path`, through
+/// `launcher` if given.
+fn desktop_entry(path: &str, launcher: Option<&str>) -> Option<String> {
+    let quoted = exec_quote(path)?;
+    let exec = match launcher {
+        Some(launcher) => format!("{launcher} {quoted}"),
+        None => quoted,
+    };
     let mut out = String::new();
     for line in DESKTOP.lines() {
         if line.starts_with("Exec=") {
-            out.push_str(&format!("Exec={exec}\nTryExec={try_exec}\n"));
+            out.push_str(&format!("Exec={exec}\n"));
         } else if !line.starts_with("TryExec=") {
             out.push_str(line);
             out.push('\n');
@@ -174,13 +203,18 @@ mod tests {
 
     #[test]
     fn desktop_entry_launches_the_appimage() {
-        let entry = desktop_entry("/my apps/SLOPP.AppImage").unwrap();
+        let entry = desktop_entry("/my apps/SLOPP.AppImage", None).unwrap();
         assert!(entry.contains("\nExec=\"/my apps/SLOPP.AppImage\"\n"));
-        assert!(entry.contains("\nTryExec=/my apps/SLOPP.AppImage\n"));
         assert!(entry.contains("\nIcon=org.slopp.Slopp\n"));
         assert!(entry.contains("\nStartupWMClass=org.slopp.Slopp\n"));
         assert!(entry.ends_with("X-SLOPP-AppImage=true\n"));
-        assert_eq!(entry.matches("Exec=").count(), 2);
+        // Desktops drop entries whose TryExec isn't executable, which an
+        // AppImage started with appimage-run needn't be.
+        assert!(!entry.contains("TryExec"));
+        assert_eq!(entry.matches("Exec=").count(), 1);
+
+        let entry = desktop_entry("/apps/SLOPP.AppImage", Some("appimage-run")).unwrap();
+        assert!(entry.contains("\nExec=appimage-run \"/apps/SLOPP.AppImage\"\n"));
     }
 
     #[test]
@@ -191,7 +225,7 @@ mod tests {
             .path()
             .join("icons/hicolor/scalable/apps/org.slopp.Slopp.svg");
 
-        integrate_into(Path::new("/old/SLOPP.AppImage"), data.path(), &[]).unwrap();
+        integrate_into(Path::new("/old/SLOPP.AppImage"), None, data.path(), &[]).unwrap();
         assert!(
             fs::read_to_string(&desktop)
                 .unwrap()
@@ -199,7 +233,7 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&icon).unwrap(), ICON);
 
-        integrate_into(Path::new("/new/SLOPP.AppImage"), data.path(), &[]).unwrap();
+        integrate_into(Path::new("/new/SLOPP.AppImage"), None, data.path(), &[]).unwrap();
         let text = fs::read_to_string(&desktop).unwrap();
         assert!(text.contains("Exec=\"/new/SLOPP.AppImage\""));
         assert!(!text.contains("/old/"));
@@ -213,7 +247,7 @@ mod tests {
         let desktop = applications.join("org.slopp.Slopp.desktop");
         fs::write(&desktop, "[Desktop Entry]\nExec=slopp\n").unwrap();
 
-        integrate_into(Path::new("/apps/SLOPP.AppImage"), data.path(), &[]).unwrap();
+        integrate_into(Path::new("/apps/SLOPP.AppImage"), None, data.path(), &[]).unwrap();
         assert_eq!(
             fs::read_to_string(&desktop).unwrap(),
             "[Desktop Entry]\nExec=slopp\n"
@@ -226,7 +260,7 @@ mod tests {
         let applications = data.path().join("applications");
         let ours = applications.join("org.slopp.Slopp.desktop");
         let appimage = Path::new("/apps/SLOPP.AppImage");
-        integrate_into(appimage, data.path(), &[]).unwrap();
+        integrate_into(appimage, None, data.path(), &[]).unwrap();
         assert!(ours.exists());
 
         // AppImageLauncher's copy of the bundled desktop file.
@@ -235,7 +269,7 @@ mod tests {
             "[Desktop Entry]\nExec=/apps/SLOPP.AppImage\n",
         )
         .unwrap();
-        integrate_into(appimage, data.path(), &[]).unwrap();
+        integrate_into(appimage, None, data.path(), &[]).unwrap();
         assert!(!ours.exists());
 
         // Installed system-wide, e.g. from a package.
@@ -247,7 +281,7 @@ mod tests {
         )
         .unwrap();
         let other = tempfile::tempdir().unwrap();
-        integrate_into(appimage, other.path(), &[system.path().to_owned()]).unwrap();
+        integrate_into(appimage, None, other.path(), &[system.path().to_owned()]).unwrap();
         assert!(
             !other
                 .path()
@@ -261,7 +295,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         fs::create_dir_all(data.path().join("appimagekit")).unwrap();
         fs::write(data.path().join("appimagekit/no_desktopintegration"), "").unwrap();
-        integrate_into(Path::new("/apps/SLOPP.AppImage"), data.path(), &[]).unwrap();
+        integrate_into(Path::new("/apps/SLOPP.AppImage"), None, data.path(), &[]).unwrap();
         assert!(!data.path().join("applications").exists());
     }
 }
