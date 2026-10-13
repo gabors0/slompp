@@ -457,6 +457,13 @@ n[fe80::1%lo0]:3307
         assert_eq!(owner.pid, Some(std::process::id()));
         assert!(owner.process.is_some());
         drop(socket);
+        // A process another test is spawning holds a copy of the socket from
+        // fork until exec (where close-on-exec shuts it), so it can outlive
+        // the drop for a moment.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while port_open(port) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert!(!port_open(port));
     }
 }
