@@ -1,0 +1,110 @@
+# Checks every push and pull request: formatting, clippy and the unit tests
+# on Linux, macOS and Windows, then the server tests (crates/slopp-core/
+# tests/servers.rs), which start the real Apache, PHP and MariaDB, with each
+# way SLOPP runs PHP:
+#
+#   ubuntu   apt's Apache with PHP-FPM, and with mod_php (prefork)
+#   macos    Homebrew's httpd with mod_php, and Apple's httpd with PHP-FPM
+#
+# Releases are release.yml's; tag pushes don't run this.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    # A pull request from this repository already ran on its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GPUI's build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev
+      - if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  servers:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, php: fpm }
+          - { os: ubuntu-24.04, php: mod_php }
+          - { os: macos-15, php: mod_php }
+          - { os: macos-15, php: fpm }
+    name: servers (${{ matrix.os }}, ${{ matrix.php }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the servers (apt)
+        if: runner.os == 'Linux'
+        run: |
+          # Install without starting the services; the tests start their own.
+          printf '#!/bin/sh\nexit 101\n' | sudo tee /usr/sbin/policy-rc.d >/dev/null
+          sudo chmod +x /usr/sbin/policy-rc.d
+          installed() {
+            dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' "$1" 2>/dev/null | awk '$1 == "ii" { print $2 }' || true
+          }
+          # The image's MySQL 8 conflicts with MariaDB, and its data
+          # directory breaks MariaDB's postinst.
+          mysql=$(installed 'mysql-*')
+          if [ -n "$mysql" ]; then sudo apt-get purge -y $mysql; fi
+          sudo rm -rf /var/lib/mysql /etc/mysql
+          sudo apt-get update
+          packages="apache2 php-fpm php-mysql mariadb-server mariadb-client"
+          if [ "${{ matrix.php }}" = mod_php ]; then packages="$packages libapache2-mod-php"; fi
+          sudo apt-get install -y --no-install-recommends $packages
+          # SLOPP prefers mod_php whenever it is there.
+          mod_php=$(installed 'libapache2-mod-php*')
+          if [ "${{ matrix.php }}" = fpm ] && [ -n "$mod_php" ]; then sudo apt-get purge -y $mod_php; fi
+      - name: Install the servers (Homebrew)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          # Without Homebrew's httpd, SLOPP uses Apple's, which refuses
+          # unsigned modules, so PHP runs as PHP-FPM.
+          if [ "${{ matrix.php }}" = mod_php ]; then brew install httpd; fi
+          brew install php mariadb
+      - name: Check which programs SLOPP finds
+        shell: bash
+        run: |
+          cargo run --locked -q -p slopp-core --bin sloppctl -- paths | tee paths.txt
+          case "${{ matrix.php }}" in
+            fpm) grep -q '(FPM)' paths.txt ;;
+            mod_php) grep -q '(mod_php)' paths.txt ;;
+          esac
+      - run: cargo test --locked -p slopp-core --test servers -- --ignored
