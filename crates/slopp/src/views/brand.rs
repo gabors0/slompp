@@ -76,6 +76,36 @@ pub fn controls(element: Div) -> Div {
     element.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
+/// The app's name, which shows the version (muted, italic) while hovered.
+fn title() -> Div {
+    const GROUP: &str = "app-title";
+    const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+    // The name keeps its place in the layout while hidden, so the tabs don't
+    // move; the version goes over it.
+    div()
+        .group(GROUP)
+        .relative()
+        .text_size(px(14.))
+        .whitespace_nowrap()
+        .child(
+            div()
+                .font_weight(FontWeight::BOLD)
+                .group_hover(GROUP, |this| this.invisible())
+                .child("SLOPP"),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .italic()
+                .text_color(Palette::text_secondary())
+                .invisible()
+                .group_hover(GROUP, |this| this.visible())
+                .child(VERSION),
+        )
+}
+
 pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
     let lamp = |module| ctl.row(module).lamp();
     let tab = |id: &'static str, label: &'static str, page: Page, cx: &Context<Panel>| {
@@ -107,12 +137,7 @@ pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl 
             h_flex()
                 .gap_2()
                 .child(mark(lamp(Module::Apache), lamp(Module::MySql)))
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::BOLD)
-                        .child("SLOPP"),
-                ),
+                .child(title()),
         )
         .child(
             controls(h_flex().gap_1())
