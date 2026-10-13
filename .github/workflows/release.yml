@@ -1,5 +1,6 @@
-# Builds SLOPP for Linux, macOS and Windows when a version tag is pushed, and
-# publishes the builds as a GitHub release:
+# Builds SLOPP for Linux (AppImage and tarball), macOS (dmg) and Windows
+# (Inno Setup installer and zip) when a version tag is pushed, and publishes
+# them as a GitHub release:
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -59,7 +60,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
             libfontconfig-dev libfreetype-dev
-      - run: cargo build --release --locked -p slopp -p slopp-core
+      # Builds the binaries and the AppImage (here, beside the tarball:
+      # artifacts keep their paths below the files' common folder).
+      - run: scripts/bundle-linux.sh .
       - name: Package
         run: |
           mkdir "$NAME"
@@ -70,7 +73,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: linux
-          path: ${{ env.NAME }}.tar.gz
+          path: |
+            ${{ env.NAME }}.tar.gz
+            ${{ env.NAME }}.AppImage
           if-no-files-found: error
 
   macos:
@@ -82,13 +87,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: scripts/bundle-macos.sh
-      # ditto keeps the bundle's signature and metadata intact.
-      - run: ditto -c -k --keepParent target/release/SLOPP.app "$NAME.zip"
+      - run: scripts/bundle-macos.sh --dmg .
       - uses: actions/upload-artifact@v7
         with:
           name: macos
-          path: ${{ env.NAME }}.zip
+          path: ${{ env.NAME }}.dmg
           if-no-files-found: error
 
   windows:
@@ -109,10 +112,21 @@ jobs:
           New-Item -ItemType Directory -Path $env:NAME | Out-Null
           Copy-Item target/release/slopp.exe, target/release/sloppctl.exe, README.md -Destination $env:NAME
           Compress-Archive -Path $env:NAME -DestinationPath "$env:NAME.zip"
+      # The runner image has Inno Setup 6: ISCC from PATH, else its default
+      # folder.
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /Qp "/O$PWD" "/DAppVersion=${{ needs.version.outputs.version }}" crates/slopp/assets/windows/slopp.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: ${{ env.NAME }}.zip
+          path: |
+            ${{ env.NAME }}.zip
+            ${{ env.NAME }}-setup.exe
           if-no-files-found: error
 
   release:
@@ -138,15 +152,20 @@ jobs:
             Windows Apache Lounge's Apache, PHP's Thread Safe build and
             MariaDB's installer (see the README).
 
-            **Linux** (x86_64, glibc 2.39 or newer): unpack and run `slopp`, or
-            `sloppctl` from a terminal. On NixOS use `nix run` instead.
+            **Linux** (x86_64, glibc 2.39 or newer): download the AppImage,
+            make it executable (`chmod +x`) and run it. It adds itself to the
+            desktop's applications (for the menu and the taskbar icon); a
+            symlink to it named `sloppctl` runs `sloppctl`. The tarball has
+            the plain binaries. On NixOS use `nix run` instead.
 
-            **macOS** (Apple silicon): unzip and move `SLOPP.app` to
-            /Applications. The app isn't notarized, so macOS blocks the first
-            launch: allow it in System Settings → Privacy & Security, or run
+            **macOS** (Apple silicon): open the dmg and drag `SLOPP.app` to
+            Applications. The app isn't notarized, so macOS blocks the first
+            launch: allow it in System Settings → Privacy & Security (Open
+            Anyway), or run
             `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
 
             **Windows** (x86_64, Windows 10 or newer; new, so expect rough
-            edges): unzip and run `slopp.exe`, or `sloppctl.exe` from a
-            terminal. It isn't signed, so SmartScreen may warn on the first
-            launch: More info → Run anyway.
+            edges): run the setup, which installs for your user without
+            admin rights, or unzip the zip and run `slopp.exe` (`sloppctl.exe`
+            from a terminal). Neither is signed, so SmartScreen may warn:
+            More info → Run anyway.

@@ -31,6 +31,8 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+dirs.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -53,3 +55,11 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSStatusItem",
     "NSView",
 ] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+# Unconditional: a target-specific build dependency is matched against the
+# host, so a cross build from Linux wouldn't get it.
+winresource = { version = "0.1.31", default-features = false }

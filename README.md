@@ -49,20 +49,33 @@ second copy, and so does a click on its Dock icon on macOS.
 Windows 10 or newer). Install the servers first, as below; SLOPP doesn't
 bundle them.
 
-- **Linux:** unpack the tarball and run `slopp`, or `sloppctl` from a terminal.
-  It needs libxkbcommon, Wayland or X11, and a Vulkan driver, which desktop
-  installs usually have.
-- **NixOS:** the release binary won't find its libraries; use the flake
+- **Linux:** make the AppImage executable (`chmod +x`) and run it. On launch
+  it adds itself to your applications (a desktop file and an icon in
+  `~/.local/share/applications` and `~/.local/share/icons`), which Wayland
+  desktops need to show its taskbar icon. It updates them if you move the
+  AppImage and leaves them to AppImageLauncher, Gear Lever or an installed
+  package if one of those has SLOPP already. To remove them, delete
+  `org.slopp.Slopp.desktop` and `org.slopp.Slopp.svg` there;
+  `~/.local/share/appimagekit/no_desktopintegration` (an empty file) stops
+  AppImages adding themselves. A symlink to the AppImage named `sloppctl`
+  runs `sloppctl`. The tarball has the plain binaries instead. Either needs
+  libxkbcommon, Wayland or X11, and a Vulkan driver, which desktop installs
+  usually have.
+- **NixOS:** the release binaries won't find their libraries; use the flake
   instead, which also puts Apache, PHP and MariaDB on `PATH`:
   `nix run github:gabors0/slopp`, or
-  `nix profile install github:gabors0/slopp` to keep it.
-- **macOS:** unzip and move `SLOPP.app` to /Applications. The app isn't
-  notarized, so macOS blocks the first launch: allow it in System Settings →
-  Privacy & Security, or run
+  `nix profile install github:gabors0/slopp` to keep it. The AppImage runs
+  with `appimage-run`, and its applications entry then starts it that way.
+- **macOS:** open the dmg and drag `SLOPP.app` to Applications. The app
+  isn't notarized, so macOS blocks the first launch: allow it in System
+  Settings → Privacy & Security (Open Anyway), or run
   `xattr -dr com.apple.quarantine /Applications/SLOPP.app`.
-- **Windows:** unzip and run `slopp.exe`, or `sloppctl.exe` from a terminal.
-  It isn't signed, so SmartScreen may warn the first time: More info → Run
-  anyway.
+- **Windows:** the setup installs SLOPP for your user without admin rights
+  (or for everyone, if you choose) with a Start menu entry; uninstalling it
+  stops the servers but keeps the stack folder and settings. The zip is the
+  portable alternative: unzip and run `slopp.exe`, or `sloppctl.exe` from a
+  terminal. Neither is signed, so SmartScreen may warn the first time: More
+  info → Run anyway.
 
 ## Running it
 
@@ -177,7 +190,10 @@ sloppctl install-adminer
   (`stack`, `process`), lists listening ports (`net`), installs phpMyAdmin and Adminer (`dbadmin`),
   and the `sloppctl` binary.
 - `crates/slopp`: the GPUI panel and the tray icon.
-- `scripts/bundle-macos.sh`: builds `SLOPP.app`.
+- `scripts/bundle-macos.sh`: builds `SLOPP.app` (and with `--dmg` the disk
+  image), `scripts/bundle-linux.sh` the AppImage, and
+  `crates/slopp/assets/windows/slopp.iss` is the Windows installer (Inno
+  Setup). `scripts/icons.sh` renders the Windows and X11 icons from the SVG.
 
 Settings are stored in `~/.config/slopp/settings.json` (`$XDG_CONFIG_HOME`
 is honoured on macOS as well), on Windows in `%APPDATA%\slopp\settings.json`.

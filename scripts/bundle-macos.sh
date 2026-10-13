@@ -1,13 +1,21 @@
 #!/bin/sh
 # Builds SLOPP.app: the panel as a macOS application for /Applications,
-# Launchpad and the Dock, with sloppctl next to it.
+# Launchpad and the Dock, with sloppctl next to it. With --dmg, also a disk
+# image to install it from, slopp-<version>-macos-<arch>.dmg: the app and a
+# link to /Applications to drag it onto.
 #
-#   scripts/bundle-macos.sh [output directory, default target/release]
+#   scripts/bundle-macos.sh [--dmg] [output directory, default target/release]
 #
-# Needs only Rust and what ships with macOS (sips, iconutil, codesign).
+# Needs only Rust and what ships with macOS (sips, iconutil, codesign,
+# hdiutil).
 set -eu
 
 cd "$(dirname "$0")/.."
+dmg=false
+if [ "${1:-}" = --dmg ]; then
+    dmg=true
+    shift
+fi
 out="${1:-target/release}"
 app="$out/SLOPP.app"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
@@ -69,3 +77,23 @@ PLIST
 codesign --force --sign - "$app" >/dev/null 2>&1
 
 echo "Built $app"
+
+if $dmg; then
+    image="$out/slopp-$version-macos-$(uname -m).dmg"
+    stage="$(mktemp -d)"
+    ditto "$app" "$stage/SLOPP.app"
+    ln -s /Applications "$stage/Applications"
+    rm -f "$image"
+    # hdiutil now and then fails with "Resource busy" on CI machines (some
+    # scanner holding the new image); a retry gets past it.
+    for attempt in 1 2 3; do
+        if hdiutil create -volname SLOPP -srcfolder "$stage" -fs HFS+ \
+            -format UDZO -ov "$image" >/dev/null; then
+            break
+        fi
+        [ "$attempt" = 3 ] && exit 1
+        sleep 5
+    done
+    rm -rf "$stage"
+    echo "Built $image"
+fi
