@@ -7,6 +7,12 @@
 #
 # Plain binaries, no AppImage, app bundle or installer: run them from a
 # terminal.
+#
+# The dependencies come from the cache that CI's check job saves (its
+# `cargo test --workspace` builds the same dev-profile units), so usually only
+# slopp and slopp-core compile. This workflow only reads that cache: keep the
+# build's environment (CARGO_* and RUST* variables, profile settings) the same
+# as CI's, or the key won't match and every run builds GPUI from scratch.
 name: Debug build
 
 on:
@@ -31,13 +37,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+          save-if: false
       - name: Install GPUI's build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
             libfontconfig-dev libfreetype-dev
-      - run: cargo build --locked -p slopp -p slopp-core
+      # With the tests, so the test-only dependencies switch on the same
+      # features as in CI's build (on macOS, rustix's default ones, which
+      # GPUI's async runtime depends on).
+      - run: cargo build --locked --workspace --bins --tests
       - name: Package
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
@@ -58,23 +71,31 @@ jobs:
   macos:
     if: contains(fromJSON('["all", "macos"]'), inputs.platforms)
     runs-on: macos-15
-    env:
-      # The dev profile leaves the debug info in the object files on macOS;
-      # this collects it into a .dSYM beside each binary, which backtraces on
-      # another Mac find.
-      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --locked -p slopp -p slopp-core
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+          save-if: false
+      # With the tests, so the test-only dependencies switch on the same
+      # features as in CI's build (on macOS, rustix's default ones, which
+      # GPUI's async runtime depends on).
+      - run: cargo build --locked --workspace --bins --tests
       - name: Package
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           name="slopp-$version-${GITHUB_SHA::7}-macos-arm64-debug"
           echo "NAME=$name" >> "$GITHUB_ENV"
           mkdir "$name"
-          cp -R target/debug/slopp target/debug/sloppctl \
-            target/debug/slopp.dSYM target/debug/sloppctl.dSYM "$name/"
+          cp target/debug/slopp target/debug/sloppctl "$name/"
+          # The dev profile leaves the debug info in the object files on
+          # macOS; a .dSYM beside each binary carries it, and backtraces on
+          # another Mac find it there. (Not split-debuginfo=packed: that
+          # changes the dependencies' build, so CI's cache wouldn't fit.)
+          for bin in slopp sloppctl; do
+            dsymutil "target/debug/$bin" -o "$name/$bin.dSYM"
+          done
           tar -czf "$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:
@@ -89,7 +110,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --locked -p slopp -p slopp-core
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+          save-if: false
+      # With the tests, so the test-only dependencies switch on the same
+      # features as in CI's build (on macOS, rustix's default ones, which
+      # GPUI's async runtime depends on).
+      - run: cargo build --locked --workspace --bins --tests
       - name: Package
         shell: bash
         run: |
