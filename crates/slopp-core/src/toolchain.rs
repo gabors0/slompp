@@ -294,8 +294,9 @@ fn search_dirs() -> Vec<PathBuf> {
 }
 
 /// Where the servers go on Windows, which has no common prefix for them:
-/// Apache Lounge's and PHP's zips unpacked as their instructions say,
-/// Chocolatey's packages, MariaDB's installer and XAMPP's own copies.
+/// winget's portable packages, Apache Lounge's and PHP's zips unpacked as
+/// their instructions say, Chocolatey's packages, MariaDB's installer and
+/// XAMPP's own copies.
 #[cfg(windows)]
 fn windows_dirs() -> Vec<PathBuf> {
     let mut drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
@@ -304,7 +305,9 @@ fn windows_dirs() -> Vec<PathBuf> {
     let program_files = std::env::var_os("ProgramFiles")
         .map(PathBuf::from)
         .unwrap_or_else(|| drive.join("Program Files"));
-    let mut dirs = vec![drive.join("Apache24\\bin")];
+    // winget adds these to PATH, but not for a panel started before.
+    let mut dirs = crate::winget::program_dirs();
+    dirs.push(drive.join("Apache24\\bin"));
     if let Some(appdata) = std::env::var_os("APPDATA") {
         dirs.push(Path::new(&appdata).join("Apache24\\bin"));
     }

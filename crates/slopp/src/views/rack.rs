@@ -236,6 +236,19 @@ fn render_actions(
     } else {
         toggle.primary()
     };
+    // Instead of Start while winget can install what's missing.
+    let install = (missing && !running && !stack.installable(m).is_empty()).then(|| {
+        let getting = ctl.getting.as_ref().map(|(module, _)| *module);
+        Button::new(SharedString::from(format!("install-{id}")))
+            .w(px(76.))
+            .small()
+            .primary()
+            .label("Install")
+            .tooltip("Install the missing servers with winget")
+            .loading(getting == Some(m))
+            .disabled(getting.is_some())
+            .on_click(on_controller(cx, move |c, cx| c.install_servers(m, cx)))
+    });
 
     let admin: AnyElement = match m {
         Module::Apache => Button::new(SharedString::from(format!("admin-{id}")))
@@ -276,7 +289,10 @@ fn render_actions(
         .child(files_menu("config", stack.config_files(m)))
         .child(files_menu("logs", stack.log_files(m)))
         .child(div().w_2())
-        .child(toggle)
+        .child(match install {
+            Some(install) => install.into_any_element(),
+            None => toggle.into_any_element(),
+        })
 }
 
 /// MySQL's Admin menu: open phpMyAdmin or Adminer, download or update them.
@@ -325,13 +341,19 @@ fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
         })
 }
 
-/// Lines under a unit: why it can't start, and a download's progress.
+/// Lines under a unit: why it can't start, and an install's or a download's
+/// progress.
 fn notes(ctl: &Controller, row: &Row) -> Vec<(String, Hsla)> {
     let mut notes: Vec<(String, Hsla)> = row
         .problems
         .iter()
         .map(|p| (p.to_string(), Palette::fault().into()))
         .collect();
+    if let Some((module, text)) = &ctl.getting
+        && *module == row.module
+    {
+        notes.push((text.clone(), Palette::text_secondary().into()));
+    }
     if row.module == Module::MySql
         && let Some((tool, text)) = &ctl.installing
     {

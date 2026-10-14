@@ -106,7 +106,16 @@ signed modules, so PHP goes through PHP-FPM there). Homebrew's programs are
 found wherever they are, linked or not, also when SLOPP is started from the
 Dock without your shell's `PATH`. MacPorts' `/opt/local` is searched too.
 
-On Windows (new, so expect rough edges), install the 64-bit builds:
+On Windows (new, so expect rough edges), the Install button on a module
+whose servers are missing gets them with [winget](https://aka.ms/getwinget),
+which comes with Windows 11 and current Windows 10 (App Installer in the
+Microsoft Store): Apache Lounge's Apache (`ApacheLounge.httpd`), PHP 8.5's
+Thread Safe build (`PHP.PHP.8.5`) and MariaDB (`MariaDB.Server`), with the
+Visual C++ runtime they need. The runtime and MariaDB install for the whole
+machine, so Windows asks for permission; MariaDB's installer sets up no
+Windows service. `winget upgrade` updates them later (stop the module first).
+
+Or install the 64-bit builds yourself:
 
 - Apache from [Apache Lounge](https://www.apachelounge.com/download/),
   unpacked to `C:\Apache24` as its readme says.
@@ -181,6 +190,7 @@ sloppctl ports               # who listens where
 sloppctl paths               # where the stack and programs are
 sloppctl install-phpmyadmin
 sloppctl install-adminer
+sloppctl install-servers [apache|mysql]   # Windows: the missing servers, with winget
 ```
 
 ## Layout
@@ -188,7 +198,7 @@ sloppctl install-adminer
 - `crates/slopp-core`: no GUI. Finds the programs (`toolchain`), writes the
   stack's config (`setup`, `templates`), starts/stops/watches the servers
   (`stack`, `process`), lists listening ports (`net`), installs phpMyAdmin and Adminer (`dbadmin`),
-  and the `sloppctl` binary.
+  installs the servers with winget on Windows (`winget`), and the `sloppctl` binary.
 - `crates/slopp`: the GPUI panel and the tray icon.
 - `scripts/bundle-macos.sh`: builds `SLOPP.app` (and with `--dmg` the disk
   image), `scripts/bundle-linux.sh` the AppImage, and

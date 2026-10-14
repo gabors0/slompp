@@ -12,7 +12,7 @@ use crate::net::{self, Listener};
 use crate::process::{self, Tracked};
 use crate::templates::conf_path;
 use crate::toolchain::PhpHandler;
-use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates};
+use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates, winget};
 
 /// Something that stops a module from starting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,7 +178,7 @@ impl Stack {
                 None => problems.push(Problem::Missing {
                     what: "Apache httpd",
                     hint: if cfg!(windows) {
-                        "Install Apache (e.g. Apache Lounge's build in C:\\Apache24), \
+                        "Install gets Apache Lounge's build with winget, \
                          or set the path of httpd.exe in Settings."
                     } else {
                         "Install Apache (httpd or apache2), or set its path in Settings."
@@ -194,8 +194,9 @@ impl Stack {
                         problems.push(Problem::Missing {
                             what: "PHP",
                             hint: if cfg!(windows) {
-                                "Install the Thread Safe build of PHP, which has the Apache \
-                                 module (php8apache2_4.dll), or set the module's path in Settings."
+                                "Install gets PHP's Thread Safe build, which has the Apache \
+                                 module (php8apache2_4.dll), with winget, or set the module's \
+                                 path in Settings."
                             } else {
                                 "Install PHP with PHP-FPM or the Apache module (libphp.so)."
                             }
@@ -209,8 +210,8 @@ impl Stack {
                     problems.push(Problem::Missing {
                         what: "MariaDB",
                         hint: if cfg!(windows) {
-                            "Install MariaDB (its installer from mariadb.org), or set the path \
-                             of mariadbd.exe in Settings."
+                            "Install gets it with winget, or set the path of mariadbd.exe \
+                             in Settings."
                         } else {
                             "Install the MariaDB server (mariadbd), or set its path in Settings."
                         }
@@ -230,6 +231,23 @@ impl Stack {
             }
         }
         problems
+    }
+
+    /// The packages that winget can install for what `module` is missing.
+    /// Only on Windows; elsewhere the system's package manager has them.
+    pub fn installable(&self, module: Module) -> Vec<winget::Package> {
+        if !cfg!(windows) {
+            return Vec::new();
+        }
+        winget::Package::ALL
+            .into_iter()
+            .filter(|p| p.module() == module)
+            .filter(|p| match p {
+                winget::Package::Apache => self.tools.httpd.is_none(),
+                winget::Package::Php => self.tools.php.is_none(),
+                winget::Package::MariaDb => self.tools.mariadb.is_none(),
+            })
+            .collect()
     }
 
     pub fn status(&self, module: Module) -> ModuleStatus {

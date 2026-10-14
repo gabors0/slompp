@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task};
 use slopp_core::dbadmin::{Installed, Progress};
 use slopp_core::net::Listener;
-use slopp_core::{DbAdmin, Module, ModuleStatus, Problem, Settings, Stack, desktop};
+use slopp_core::{DbAdmin, Module, ModuleStatus, Problem, Settings, Stack, desktop, winget};
 
 use crate::log::{Kind, Log};
 use crate::panel;
@@ -90,6 +90,9 @@ pub struct Controller {
     /// A database admin tool being downloaded, and its progress for the
     /// MySQL row. One at a time.
     pub installing: Option<(DbAdmin, String)>,
+    /// A module whose servers winget is installing, and the line it printed
+    /// last. One module at a time.
+    pub getting: Option<(Module, String)>,
     /// Whether a window shows the Ports page (polls then list listeners).
     pub watch_ports: bool,
     tray: Option<TrayHandle>,
@@ -176,6 +179,7 @@ impl Controller {
             log,
             listeners: Vec::new(),
             installing: None,
+            getting: None,
             watch_ports: false,
             tray: None,
             tray_state: None,
@@ -717,6 +721,119 @@ impl Controller {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Installs the servers `module` is missing with winget (Windows), then
+    /// looks for the programs again.
+    pub fn install_servers(&mut self, module: Module, cx: &mut Context<Self>) {
+        if self.getting.is_some() {
+            return;
+        }
+        let packages = self.stack.installable(module);
+        if packages.is_empty() {
+            return;
+        }
+        let Some(winget) = winget::find() else {
+            self.log.push(
+                Some(module),
+                Kind::Error,
+                format!(
+                    "Installing the servers needs winget, which comes with App Installer \
+                     from the Microsoft Store: {}",
+                    winget::GET_WINGET_URL
+                ),
+            );
+            cx.emit(ControllerEvent::Notify {
+                text: "winget isn't installed: get App Installer from the Microsoft Store".into(),
+                error: true,
+            });
+            cx.notify();
+            return;
+        };
+        let names: Vec<&str> = packages.iter().map(|p| p.name()).collect();
+        self.log.push(
+            Some(module),
+            Kind::Info,
+            format!("Installing {} with winget…", names.join(" and ")),
+        );
+        self.getting = Some((module, "Starting winget…".into()));
+
+        enum Message {
+            Line(winget::Package, String),
+            Done(Result<(), String>),
+        }
+        let (tx, rx) = async_channel::unbounded::<Message>();
+        std::thread::spawn(move || {
+            for package in packages {
+                let _ = tx.send_blocking(Message::Line(package, "Starting winget…".into()));
+                let result = winget::install(&winget, package, |line| {
+                    let _ = tx.send_blocking(Message::Line(package, line));
+                });
+                if let Err(err) = result {
+                    let err = format!("Installing {} failed: {err:#}", package.name());
+                    let _ = tx.send_blocking(Message::Done(Err(err)));
+                    return;
+                }
+            }
+            let _ = tx.send_blocking(Message::Done(Ok(())));
+        });
+        cx.spawn(async move |this, cx| {
+            while let Ok(message) = rx.recv().await {
+                let done = matches!(message, Message::Done(_));
+                let ok = this.update(cx, |this, cx| {
+                    match message {
+                        Message::Line(package, line) => {
+                            this.getting = Some((module, format!("{}: {line}", package.name())));
+                        }
+                        Message::Done(result) => {
+                            this.getting = None;
+                            this.servers_installed(module, result, cx);
+                        }
+                    }
+                    this.changed(cx);
+                });
+                if done || ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// After winget: finds the new programs and says what runs the module.
+    fn servers_installed(
+        &mut self,
+        module: Module,
+        result: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
+        // Whatever failed, an earlier package may have gone in.
+        let settings = self.stack.settings().clone();
+        self.stack = Arc::new(self.stack.reconfigure(settings));
+        if let Err(err) = result {
+            self.log.push(Some(module), Kind::Error, err);
+            return;
+        }
+        match self.stack.describe(module) {
+            Some(text) if self.stack.installable(module).is_empty() => {
+                self.log
+                    .push(Some(module), Kind::Ok, format!("Installed: {text}"));
+                cx.emit(ControllerEvent::Notify {
+                    text: format!("{module} is installed"),
+                    error: false,
+                });
+            }
+            _ => {
+                // winget succeeded, yet the programs aren't where we look.
+                for problem in self.stack.problems(module) {
+                    if let Problem::Missing { .. } = problem {
+                        self.log
+                            .push(Some(module), Kind::Error, problem.to_string());
+                    }
+                }
+            }
+        }
     }
 
     pub fn clear_log(&mut self, cx: &mut Context<Self>) {
