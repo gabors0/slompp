@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use slopp_core::dbadmin::Progress;
-use slopp_core::{DbAdmin, Module, Settings, Stack, net};
+use slopp_core::{DbAdmin, Module, Settings, Stack, net, winget};
 
 const USAGE: &str = "\
 Usage: sloppctl <command> [apache|mysql]
@@ -18,6 +18,8 @@ Commands:
   paths                Show where the stack and its programs are
   install-phpmyadmin   Download phpMyAdmin into the stack
   install-adminer      Download Adminer into the stack
+  install-servers [module]
+                       Install missing servers with winget (Windows)
 
 The stack lives in $SLOPP_ROOT, or the root set in the panel's settings.";
 
@@ -65,6 +67,7 @@ fn main() -> ExitCode {
         }
         "install-phpmyadmin" => install_db_admin(&stack, DbAdmin::PhpMyAdmin),
         "install-adminer" => install_db_admin(&stack, DbAdmin::Adminer),
+        "install-servers" => install_servers(&stack, &modules),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");
             true
@@ -199,6 +202,46 @@ fn paths(stack: &Stack) {
         "mariadbd      {}",
         show(tools.mariadb.as_ref().map(|m| m.server.as_path()))
     );
+}
+
+fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
+    if !cfg!(windows) {
+        eprintln!("Install Apache, PHP and MariaDB with your system's package manager.");
+        return false;
+    }
+    let packages: Vec<_> = modules.iter().flat_map(|&m| stack.installable(m)).collect();
+    if packages.is_empty() {
+        println!("Nothing to install: the servers were found.");
+        return true;
+    }
+    let Some(winget) = winget::find() else {
+        eprintln!(
+            "Installing the servers needs winget, which comes with App Installer \
+             from the Microsoft Store: {}",
+            winget::GET_WINGET_URL
+        );
+        return false;
+    };
+    for package in packages {
+        println!(
+            "Installing {} ({}) with winget...",
+            package.name(),
+            package.id()
+        );
+        if let Err(err) = winget::install(&winget, package, |line| println!("  {line}")) {
+            eprintln!("Installing {} failed: {err:#}", package.name());
+            return false;
+        }
+    }
+    // A new process finds what was installed.
+    let stack = Stack::new(stack.settings().clone());
+    for &m in modules {
+        match stack.describe(m) {
+            Some(text) => println!("{m}: {text}"),
+            None => println!("{m}: still not found; see `sloppctl status`."),
+        }
+    }
+    true
 }
 
 fn install_db_admin(stack: &Stack, tool: DbAdmin) -> bool {

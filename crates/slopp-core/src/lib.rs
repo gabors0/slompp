@@ -19,6 +19,7 @@ pub mod setup;
 pub mod stack;
 pub mod templates;
 pub mod toolchain;
+pub mod winget;
 
 pub use dbadmin::DbAdmin;
 pub use layout::Layout;
