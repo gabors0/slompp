@@ -281,6 +281,17 @@ impl Controller {
         );
         self.log
             .push(None, Kind::Info, format!("Stack root: {root}"));
+        let crash_log = crate::crash::log_path();
+        if let Some(crash) = crate::crash::take_last(&crash_log) {
+            self.log.push(
+                None,
+                Kind::Error,
+                format!(
+                    "The last run crashed: {crash} (details in {})",
+                    crash_log.with_extension("log.old").display()
+                ),
+            );
+        }
         for m in Module::ALL {
             match self.stack.describe(m) {
                 Some(text) => self.log.push(Some(m), Kind::Info, text),
@@ -367,6 +378,16 @@ impl Controller {
         })
     }
 
+    fn log_running(&mut self, status: &ModuleStatus) {
+        let ports: Vec<String> = status.ports.iter().map(|p| p.port.to_string()).collect();
+        let what = if ports.len() == 1 { "port" } else { "ports" };
+        self.log.push(
+            Some(status.module),
+            Kind::Ok,
+            format!("Running on {what} {}", ports.join(" and ")),
+        );
+    }
+
     fn apply_snapshot(&mut self, (taken, modules, listeners): Snapshot, cx: &mut Context<Self>) {
         for (status, problems) in modules {
             let m = status.module;
@@ -383,14 +404,7 @@ impl Controller {
                 } => {
                     if status.ready() {
                         self.row_mut(m).phase = Phase::Idle;
-                        let ports: Vec<String> =
-                            status.ports.iter().map(|p| p.port.to_string()).collect();
-                        let what = if ports.len() == 1 { "port" } else { "ports" };
-                        self.log.push(
-                            Some(m),
-                            Kind::Ok,
-                            format!("Running on {what} {}", ports.join(" and ")),
-                        );
+                        self.log_running(&status);
                     } else if !status.running() {
                         self.row_mut(m).phase = Phase::Failed;
                         let details = self.stack.failure_details(m);
@@ -405,7 +419,8 @@ impl Controller {
                             Some(m),
                             Kind::Error,
                             format!(
-                                "{m} is running but did not open its ports within {}s.",
+                                "{m} is running but did not open its ports within {}s. \
+                                 If it is only slow, it turns green when it does.",
                                 START_TIMEOUT.as_secs()
                             ),
                         );
@@ -431,6 +446,11 @@ impl Controller {
                     } else if was_running.is_none() && status.running() {
                         self.log
                             .push(Some(m), Kind::Info, format!("{m} is already running"));
+                    } else if phase == Phase::Failed && status.ready() {
+                        // Opened its ports after the start timed out: slow
+                        // (a first start, a busy disk), not broken.
+                        self.row_mut(m).phase = Phase::Idle;
+                        self.log_running(&status);
                     }
                 }
             }

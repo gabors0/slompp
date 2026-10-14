@@ -8,6 +8,7 @@
 #[cfg(target_os = "linux")]
 mod appimage;
 mod controller;
+mod crash;
 mod instance;
 mod log;
 #[cfg(target_os = "macos")]
@@ -30,6 +31,7 @@ struct PanelWindow(Option<AnyWindowHandle>);
 impl Global for PanelWindow {}
 
 fn main() {
+    crash::install(crash::log_path());
     let filter = tracing_subscriber::EnvFilter::try_from_env("SLOPP_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,slopp=info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
