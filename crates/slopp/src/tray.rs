@@ -812,7 +812,7 @@ pub mod icon {
         fn black_ink_holds_the_lamp_solid_further_in() {
             let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Black);
             assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
-            assert_eq!(pixel(&icon, 20, 16), [255, 0xB0, 0x7A, 0x12]);
+            assert_eq!(pixel(&icon, 20, 16), [255, 0xEF, 0xAC, 0x01]);
             assert_eq!(pixel(&icon, 5, 11), [255, 0x73, 0x73, 0x73]);
         }
 
