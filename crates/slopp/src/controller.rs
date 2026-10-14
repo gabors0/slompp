@@ -764,18 +764,23 @@ impl Controller {
         }
         let (tx, rx) = async_channel::unbounded::<Message>();
         std::thread::spawn(move || {
+            // One package failing doesn't stop the others.
+            let mut errors = Vec::new();
             for package in packages {
                 let _ = tx.send_blocking(Message::Line(package, "Starting winget…".into()));
                 let result = winget::install(&winget, package, |line| {
                     let _ = tx.send_blocking(Message::Line(package, line));
                 });
                 if let Err(err) = result {
-                    let err = format!("Installing {} failed: {err:#}", package.name());
-                    let _ = tx.send_blocking(Message::Done(Err(err)));
-                    return;
+                    errors.push(format!("Installing {} failed: {err:#}", package.name()));
                 }
             }
-            let _ = tx.send_blocking(Message::Done(Ok(())));
+            let result = if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("\n"))
+            };
+            let _ = tx.send_blocking(Message::Done(result));
         });
         cx.spawn(async move |this, cx| {
             while let Ok(message) = rx.recv().await {
@@ -811,8 +816,14 @@ impl Controller {
         // Whatever failed, an earlier package may have gone in.
         let settings = self.stack.settings().clone();
         self.stack = Arc::new(self.stack.reconfigure(settings));
-        if let Err(err) = result {
-            self.log.push(Some(module), Kind::Error, err);
+        if let Err(errors) = result {
+            for err in errors.lines() {
+                self.log.push(Some(module), Kind::Error, err.to_string());
+            }
+            if let Some(text) = self.stack.describe(module) {
+                self.log
+                    .push(Some(module), Kind::Info, format!("Found: {text}"));
+            }
             return;
         }
         match self.stack.describe(module) {

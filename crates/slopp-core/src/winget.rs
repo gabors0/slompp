@@ -27,9 +27,16 @@ pub const GET_WINGET_URL: &str = "https://aka.ms/getwinget";
 /// update never brings a new minor version that a site isn't ready for.
 const PHP_SERIES: &str = "8.5";
 
-/// `winget install`'s exit code when the package is installed and no newer
-/// version applies (`APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE`).
+/// `winget install`'s exit codes when the package is installed already and
+/// no newer version applies (`APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE`,
+/// `APPINSTALLER_CLI_ERROR_PACKAGE_ALREADY_INSTALLED`).
 const UPDATE_NOT_APPLICABLE: i32 = 0x8A15002B_u32 as i32;
+const PACKAGE_ALREADY_INSTALLED: i32 = 0x8A150061_u32 as i32;
+
+/// The download doesn't match the hash in winget's package
+/// (`APPINSTALLER_CLI_ERROR_INSTALLER_HASH_MISMATCH`): the publisher
+/// replaced the file and the community repository hasn't caught up yet.
+const INSTALLER_HASH_MISMATCH: i32 = 0x8A150011_u32 as i32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Package {
@@ -63,6 +70,25 @@ impl Package {
             Package::Apache => "ApacheLounge.httpd".into(),
             Package::Php => format!("PHP.PHP.{PHP_SERIES}"),
             Package::MariaDb => "MariaDB.Server".into(),
+        }
+    }
+
+    fn publisher(self) -> &'static str {
+        match self {
+            Package::Apache => "Apache Lounge",
+            Package::Php => "php.net",
+            Package::MariaDb => "mariadb.org",
+        }
+    }
+
+    /// Where to get it by hand, where SLOPP finds it.
+    fn by_hand(self) -> &'static str {
+        match self {
+            Package::Apache => "get Apache from apachelounge.com and unpack it to C:\\Apache24",
+            Package::Php => {
+                "get PHP's Thread Safe zip from windows.php.net and unpack it to C:\\php"
+            }
+            Package::MariaDb => "get MariaDB's installer from mariadb.org",
         }
     }
 
@@ -143,7 +169,15 @@ pub fn install(
     let errors = crate::process::decode(&errors.join().unwrap_or_default());
 
     match status.code() {
-        Some(0) | Some(UPDATE_NOT_APPLICABLE) => Ok(()),
+        Some(0 | UPDATE_NOT_APPLICABLE | PACKAGE_ALREADY_INSTALLED) => Ok(()),
+        // `--ignore-security-hash` would install an unchecked download (and
+        // needs an admin to allow it), so say where else to get it.
+        Some(INSTALLER_HASH_MISMATCH) => bail!(
+            "winget's package doesn't match the file {} now serves; winget's \
+             repository usually catches up within days. Try again later, or {}.",
+            package.publisher(),
+            package.by_hand()
+        ),
         code => {
             let mut detail: Vec<&str> = lines
                 .last

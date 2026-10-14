@@ -222,6 +222,8 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         );
         return false;
     };
+    // One package failing doesn't stop the others.
+    let mut ok = true;
     for package in packages {
         println!(
             "Installing {} ({}) with winget...",
@@ -230,7 +232,7 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         );
         if let Err(err) = winget::install(&winget, package, |line| println!("  {line}")) {
             eprintln!("Installing {} failed: {err:#}", package.name());
-            return false;
+            ok = false;
         }
     }
     // A new process finds what was installed.
@@ -241,7 +243,7 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
             None => println!("{m}: still not found; see `sloppctl status`."),
         }
     }
-    true
+    ok
 }
 
 fn install_db_admin(stack: &Stack, tool: DbAdmin) -> bool {
