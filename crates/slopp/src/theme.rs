@@ -62,7 +62,7 @@ impl MarkInk {
         unit: 0x000000,
         link: 0x737373,
         on: 0x1F8F58,
-        busy: 0xB07A12,
+        busy: 0xEFAC01,
         fault: 0xC5372B,
         lamp_solid: 0.4,
     };
