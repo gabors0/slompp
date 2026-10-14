@@ -1,0 +1,109 @@
+# Builds SLOPP's debug binaries (the dev profile: debug assertions, overflow
+# checks and debug info, so panics and RUST_BACKTRACE=1 name files and lines)
+# for the chosen platforms, and attaches them to the run as artifacts. Only
+# "Run workflow" in the Actions tab starts it; from a shell:
+#
+#   gh workflow run debug.yml --ref <branch> -f platforms=windows
+#
+# Plain binaries, no AppImage, app bundle or installer: run them from a
+# terminal.
+name: Debug build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms to build
+        type: choice
+        options: [all, linux, macos, windows]
+        default: all
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    if: contains(fromJSON('["all", "linux"]'), inputs.platforms)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GPUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev
+      - run: cargo build --locked -p slopp -p slopp-core
+      - name: Package
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          name="slopp-$version-${GITHUB_SHA::7}-linux-x86_64-debug"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          # A tarball, since artifacts drop the executable bit. The debug
+          # info is in the binaries.
+          mkdir "$name"
+          cp target/debug/slopp target/debug/sloppctl "$name/"
+          tar -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    if: contains(fromJSON('["all", "macos"]'), inputs.platforms)
+    runs-on: macos-15
+    env:
+      # The dev profile leaves the debug info in the object files on macOS;
+      # this collects it into a .dSYM beside each binary, which backtraces on
+      # another Mac find.
+      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked -p slopp -p slopp-core
+      - name: Package
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          name="slopp-$version-${GITHUB_SHA::7}-macos-arm64-debug"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          mkdir "$name"
+          cp -R target/debug/slopp target/debug/sloppctl \
+            target/debug/slopp.dSYM target/debug/sloppctl.dSYM "$name/"
+          tar -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    if: contains(fromJSON('["all", "windows"]'), inputs.platforms)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked -p slopp -p slopp-core
+      - name: Package
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          name="slopp-$version-${GITHUB_SHA::7}-windows-x86_64-debug"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          # The debug info is in the .pdb files, which belong beside the
+          # programs.
+          mkdir "$name"
+          cp target/debug/slopp.exe target/debug/sloppctl.exe \
+            target/debug/slopp.pdb target/debug/sloppctl.pdb "$name/"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}
+          if-no-files-found: error
+          retention-days: 14
