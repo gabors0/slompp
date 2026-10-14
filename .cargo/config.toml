@@ -1,0 +1,4 @@
+# Link the C runtime into the Windows programs. A fresh Windows has no Visual
+# C++ runtime (VCRUNTIME140.dll), and SLOPP wouldn't start without it.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
