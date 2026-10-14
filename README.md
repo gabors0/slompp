@@ -209,3 +209,9 @@ Settings are stored in `~/.config/slopp/settings.json` (`$XDG_CONFIG_HOME`
 is honoured on macOS as well), on Windows in `%APPDATA%\slopp\settings.json`.
 
 Fonts: IBM Plex Sans and IBM Plex Mono (SIL Open Font License).
+
+## License
+
+SLOPP is licensed under the [GNU General Public License v3.0 or later](LICENSE). Apache httpd, PHP,
+MariaDB, phpMyAdmin and Adminer are separate programs with their own licenses;
+SLOPP runs them as child processes and doesn't include or link them.
