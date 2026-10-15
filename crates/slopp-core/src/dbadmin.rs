@@ -134,3 +134,20 @@ pub(crate) fn download(
     progress(total.map(|_| 1.0));
     Ok(())
 }
+
+/// Fails unless the file's SHA-256 is `expected` (lowercase hex), the digest
+/// GitHub's API lists for a release download.
+pub(crate) fn check_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
+    use sha2::{Digest as _, Sha256};
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).with_context(|| format!("reading {}", path.display()))?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected {
+        anyhow::bail!(
+            "the download doesn't match GitHub's digest (expected {expected}, got {actual})"
+        );
+    }
+    Ok(())
+}

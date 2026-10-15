@@ -1,5 +1,6 @@
 //! The control panel window: a view of the [`Controller`] with its pages.
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -9,7 +10,7 @@ use gpui_kit::{
 };
 use slopp_core::settings::Appearance;
 
-use crate::controller::{Controller, ControllerEvent};
+use crate::controller::{Controller, ControllerEvent, UpdateState};
 use crate::theme::{self, Palette};
 use crate::views::settings::{SettingsEvent, SettingsView};
 use crate::views::{brand, console, ports, rack};
@@ -54,6 +55,8 @@ pub struct Panel {
     /// The log revision the console last scrolled down to.
     scrolled_revision: usize,
     settings_view: Entity<SettingsView>,
+    /// Whether this window shows the notice of a new release.
+    update_notice: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -67,7 +70,10 @@ impl Panel {
         window.focus(&focus, cx);
 
         let subscriptions = vec![
-            cx.observe(&controller, |_, _, cx| cx.notify()),
+            cx.observe_in(&controller, window, |this, _, window, cx| {
+                this.announce_update(window, cx);
+                cx.notify();
+            }),
             cx.subscribe_in(&controller, window, |_, _, event, window, cx| {
                 let ControllerEvent::Notify { text, error } = event;
                 let note = if *error {
@@ -101,11 +107,69 @@ impl Panel {
             log_scroll: ScrollHandle::new(),
             scrolled_revision: usize::MAX,
             settings_view,
+            update_notice: false,
             focus,
             _subscriptions: subscriptions,
         };
         this.show(page, cx);
+        // Once the window is up: an update found while it was closed.
+        cx.defer_in(window, |this, window, cx| this.announce_update(window, cx));
         this
+    }
+
+    /// Tells about a new release once per version, with a way to the
+    /// Updates group in Settings; takes the notice away once updating
+    /// starts there.
+    fn announce_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        struct UpdateNotice;
+        let ctl = self.controller.read(cx);
+        let available = match &ctl.update {
+            UpdateState::Available(release) => Some(release.version.clone()),
+            UpdateState::Installing { .. } | UpdateState::Ready { .. } => None,
+            _ => return,
+        };
+        let fresh = available.is_some() && ctl.announced != available;
+        let can_update = ctl.install.can_update();
+        let Some(version) = available else {
+            if std::mem::take(&mut self.update_notice) {
+                window.remove_notification::<UpdateNotice>(cx);
+            }
+            return;
+        };
+        if !fresh {
+            return;
+        }
+        let message = if can_update {
+            "Update it from Settings with one click."
+        } else {
+            "See Settings for how to get it."
+        };
+        self.controller
+            .update(cx, |c, _| c.announced = Some(version.clone()));
+        let panel = cx.entity().downgrade();
+        let note = Notification::new()
+            .id::<UpdateNotice>()
+            .title(format!("SLOPP {version} is available"))
+            .message(message)
+            .action(move |_, _, cx| {
+                let panel = panel.clone();
+                Button::new("update-settings")
+                    .primary()
+                    .label("Settings")
+                    .on_click(cx.listener(move |note, _, window, cx| {
+                        note.dismiss(window, cx);
+                        panel
+                            .update(cx, |panel, cx| {
+                                panel.show(Page::Settings, cx);
+                                panel
+                                    .settings_view
+                                    .update(cx, |view, cx| view.show_updates(cx));
+                            })
+                            .ok();
+                    }))
+            });
+        window.push_notification(note, cx);
+        self.update_notice = true;
     }
 
     pub fn show(&mut self, page: Page, cx: &mut Context<Self>) {

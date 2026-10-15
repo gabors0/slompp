@@ -1,21 +1,23 @@
 //! Settings: ports, the stack folder, editor and terminal, autostart, the
-//! panel's appearance, and paths to the server programs when they can't be
-//! found automatically.
+//! panel's appearance, updating SLOPP, and paths to the server programs when
+//! they can't be found automatically.
 
 use std::path::PathBuf;
 
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, EventEmitter, FontWeight, SharedString, Window, div, px,
+    AnyElement, App, Context, Entity, EventEmitter, FontWeight, Rgba, ScrollHandle, SharedString,
+    Subscription, Window, div, px,
 };
 use slopp_core::settings::{Appearance, Binaries, Ports};
 use slopp_core::toolchain::PhpHandler;
-use slopp_core::{Layout, Module, Settings, Stack};
+use slopp_core::{Layout, Module, Settings, Stack, update};
 
+use crate::controller::{Controller, UpdateState};
 use crate::theme::{self, Palette};
 
 pub enum SettingsEvent {
@@ -77,8 +79,12 @@ pub struct SettingsView {
     autostart_mailpit: bool,
     stop_on_exit: bool,
     close_to_tray: bool,
+    check_updates: bool,
     appearance: Appearance,
     error: Option<String>,
+    scroll: ScrollHandle,
+    /// Redraws the Updates group as an update goes along.
+    _controller: Subscription,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -182,14 +188,26 @@ impl SettingsView {
             autostart_mailpit: s.autostart.contains(&Module::Mailpit),
             stop_on_exit: s.stop_on_exit,
             close_to_tray: s.close_to_tray,
+            check_updates: s.check_updates,
             appearance: s.appearance,
             error: None,
+            scroll: ScrollHandle::new(),
+            _controller: cx.observe(&Controller::global(cx), |_, _, cx| cx.notify()),
         }
     }
 
     /// Shows the saved settings (and newly found programs) again.
     pub fn reload(&mut self, stack: &Stack, window: &mut Window, cx: &mut Context<Self>) {
+        // Where the page was scrolled to stays.
+        let scroll = self.scroll.clone();
         *self = Self::new(stack, window, cx);
+        self.scroll = scroll;
+        cx.notify();
+    }
+
+    /// Scrolls down to the Updates group, the last.
+    pub fn show_updates(&mut self, cx: &mut Context<Self>) {
+        self.scroll.scroll_to_bottom();
         cx.notify();
     }
 
@@ -253,6 +271,7 @@ impl SettingsView {
             stop_on_exit: self.stop_on_exit,
             close_to_tray: self.close_to_tray,
             appearance: self.appearance,
+            check_updates: self.check_updates,
         })
     }
 
@@ -340,6 +359,158 @@ fn toggle(
         .into_any_element()
 }
 
+/// A button that runs `f` on the controller.
+fn on_controller(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    f: fn(&mut Controller, &mut Context<Controller>),
+) -> Button {
+    Button::new(id)
+        .small()
+        .label(label)
+        .on_click(move |_, _, cx: &mut App| {
+            Controller::global(cx).update(cx, f);
+        })
+}
+
+impl SettingsView {
+    /// The Updates group: the version, how it updates, and what the update
+    /// is doing.
+    fn updates(&self, cx: &mut Context<Self>) -> AnyElement {
+        let controller = Controller::global(cx);
+        let ctl = controller.read(cx);
+        let state = ctl.update.clone();
+        let install = ctl.install.describe();
+        let can_update = ctl.install.can_update();
+        let check = |label: &'static str| {
+            on_controller("check-updates", label, |c, cx| c.check_for_update(true, cx)).outline()
+        };
+        let (status, color, buttons): (String, Rgba, Vec<Button>) = match state {
+            UpdateState::Unknown => (
+                "Not checked yet".into(),
+                Palette::text_secondary(),
+                vec![check("Check now")],
+            ),
+            UpdateState::Checking => (
+                "Checking…".into(),
+                Palette::text_secondary(),
+                vec![check("Checking…").disabled(true)],
+            ),
+            UpdateState::UpToDate => (
+                "Up to date".into(),
+                Palette::ok(),
+                vec![check("Check again")],
+            ),
+            UpdateState::Available(release) if can_update => (
+                format!("SLOPP {} is available", release.version),
+                Palette::text(),
+                vec![
+                    on_controller(
+                        "install-update",
+                        format!("Update to {}", release.version),
+                        Controller::install_update,
+                    )
+                    .primary(),
+                    on_controller(
+                        "release-notes",
+                        "Release notes",
+                        Controller::open_release_page,
+                    )
+                    .ghost(),
+                ],
+            ),
+            UpdateState::Available(release) => (
+                format!("SLOPP {} is available", release.version),
+                Palette::text(),
+                vec![
+                    on_controller("release-page", "Download", Controller::open_release_page)
+                        .primary(),
+                ],
+            ),
+            UpdateState::Installing { release, progress } => (
+                format!("Updating to {}: {progress}", release.version),
+                Palette::text_secondary(),
+                vec![on_controller("install-update", "Updating…", |_, _| {}).disabled(true)],
+            ),
+            UpdateState::Ready { version, restart } => (
+                if restart.installs {
+                    format!("SLOPP {version} is downloaded")
+                } else {
+                    format!("SLOPP {version} is installed")
+                },
+                Palette::ok(),
+                vec![
+                    on_controller(
+                        "restart-update",
+                        if restart.installs {
+                            "Restart and install"
+                        } else {
+                            "Restart SLOPP"
+                        },
+                        Controller::restart_into_update,
+                    )
+                    .primary(),
+                ],
+            ),
+            UpdateState::Failed {
+                error,
+                release: Some(_),
+            } => (
+                format!("Updating failed: {error}"),
+                Palette::fault(),
+                vec![
+                    on_controller("install-update", "Try again", Controller::install_update)
+                        .primary(),
+                    on_controller("release-page", "Download", Controller::open_release_page)
+                        .ghost(),
+                ],
+            ),
+            UpdateState::Failed {
+                error,
+                release: None,
+            } => (
+                format!("Checking failed: {error}"),
+                Palette::fault(),
+                vec![check("Check again")],
+            ),
+        };
+        v_flex()
+            .gap_3()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .text_size(px(13.))
+                            .child(
+                                div()
+                                    .font_family(theme::MONO)
+                                    .child(format!("Version {}", update::CURRENT)),
+                            )
+                            .child(div().text_color(Palette::text_tertiary()).child("·"))
+                            .child(div().min_w_0().text_color(color).child(status)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(Palette::text_secondary())
+                            .child(install),
+                    ),
+            )
+            .child(h_flex().gap_2().children(buttons))
+            .child(toggle(
+                "check-updates-toggle",
+                "Check for updates when SLOPP opens, and daily",
+                self.check_updates,
+                cx,
+                |this, v| this.check_updates = v,
+            ))
+            .into_any_element()
+    }
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let port = |label, field| div().w(px(100.)).child(labelled(label, field, true));
@@ -414,6 +585,8 @@ impl Render for SettingsView {
                 }
             }));
 
+        let updates = self.updates(cx);
+
         let footer = h_flex()
             .gap_3()
             .py_4()
@@ -439,6 +612,7 @@ impl Render for SettingsView {
             .id("settings")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .child(
                 v_flex()
                     .max_w(px(860.))
@@ -472,6 +646,7 @@ impl Render for SettingsView {
                         h_flex().child(appearance),
                         false,
                     ))
+
                     .child(section(
                         "Programs",
                         "SLOPP looks for Apache, PHP, MariaDB and Mailpit on your PATH. Set a path here to use a different one.",
@@ -491,6 +666,12 @@ impl Render for SettingsView {
                             ))
                             .child(labelled("MariaDB server (mariadbd)", &self.mariadbd, true))
                             .child(labelled("Mailpit", &self.mailpit, true)),
+                        false,
+                    ))
+                    .child(section(
+                        "Updates",
+                        "New versions come from SLOPP's releases on GitHub, checked against their SHA-256 digests. The servers keep running while SLOPP restarts.",
+                        updates,
                         false,
                     ))
                     .child(footer),

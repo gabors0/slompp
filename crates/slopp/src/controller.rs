@@ -10,6 +10,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task
 use slopp_core::dbadmin::{Installed, Progress};
 use slopp_core::install::{self, Installer};
 use slopp_core::net::Listener;
+use slopp_core::update::{self, Install, Release, Restart};
 use slopp_core::{DbAdmin, Module, ModuleStatus, Problem, Settings, Stack, desktop};
 
 use crate::log::{Kind, Log};
@@ -77,6 +78,31 @@ impl Row {
     }
 }
 
+/// Where updating SLOPP itself stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateState {
+    /// Not looked for yet, or checks are off.
+    Unknown,
+    Checking,
+    UpToDate,
+    Available(Release),
+    /// Downloading it and putting it in place; `progress` says how far.
+    Installing {
+        release: Release,
+        progress: String,
+    },
+    /// In place (for the Windows installer, downloaded): a restart uses it.
+    Ready {
+        version: String,
+        restart: Restart,
+    },
+    /// The check failed, or with `release`, the update did.
+    Failed {
+        error: String,
+        release: Option<Release>,
+    },
+}
+
 /// Something to tell the user in the window, if one is open.
 pub enum ControllerEvent {
     Notify { text: String, error: bool },
@@ -96,10 +122,18 @@ pub struct Controller {
     pub getting: Option<(Module, String)>,
     /// Whether a window shows the Ports page (polls then list listeners).
     pub watch_ports: bool,
+    /// How this SLOPP was installed, which says how it updates.
+    pub install: Install,
+    pub update: UpdateState,
+    /// The release a window last announced, so each is announced once.
+    pub announced: Option<String>,
+    /// Set as SLOPP quits to restart into an update.
+    restarting: bool,
     tray: Option<TrayHandle>,
     /// The state last sent to the tray.
     tray_state: Option<TrayState>,
     _poll: Task<()>,
+    _update_checks: Task<()>,
 }
 
 /// One poll: each module's status and problems, and the listening ports
@@ -113,6 +147,15 @@ type Snapshot = (
 
 /// How long a launched module gets to open its ports.
 const START_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How often a running SLOPP looks for a new release.
+const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The version updates are compared with: this one's, unless
+/// `SLOPP_UPDATE_FROM` pretends to be another (to try the update flow).
+fn current_version() -> String {
+    std::env::var("SLOPP_UPDATE_FROM").unwrap_or_else(|_| update::CURRENT.to_string())
+}
 
 /// Lets the tray and the window find the controller.
 struct ControllerHandle(Entity<Controller>);
@@ -151,7 +194,8 @@ impl Controller {
 
         cx.on_app_quit(|this, _| {
             let stack = this.stack.clone();
-            let stop = stack.settings().stop_on_exit;
+            // An update's restart leaves them for the new SLOPP.
+            let stop = stack.settings().stop_on_exit && !this.restarting;
             async move {
                 if stop {
                     for m in Module::ALL {
@@ -182,12 +226,18 @@ impl Controller {
             installing: None,
             getting: None,
             watch_ports: false,
+            install: Install::detect(),
+            update: UpdateState::Unknown,
+            announced: None,
+            restarting: false,
             tray: None,
             tray_state: None,
             _poll: Task::ready(()),
+            _update_checks: Task::ready(()),
         };
         this.greet();
         this._poll = this.poll_loop(cx);
+        this._update_checks = this.update_loop(cx);
         this.autostart(cx);
         this
     }
@@ -871,6 +921,221 @@ impl Controller {
                 }
             }
         }
+    }
+
+    /// Tidies up after an earlier update, then looks for a new release
+    /// shortly after the start and daily, while Settings allows it.
+    fn update_loop(&self, cx: &mut Context<Self>) -> Task<()> {
+        let install = self.install.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            // The old version may only just have quit.
+            cx.background_spawn(async move { install.clean_up() }).await;
+            loop {
+                let checked = this.update(cx, |this, cx| {
+                    if this.settings().check_updates {
+                        this.check_for_update(false, cx);
+                    }
+                });
+                if checked.is_err() {
+                    return;
+                }
+                cx.background_executor().timer(UPDATE_INTERVAL).await;
+            }
+        })
+    }
+
+    /// Asks GitHub for the latest release. `manual` (the Check button) also
+    /// reports when there's nothing new, or the check failed, in the log.
+    pub fn check_for_update(&mut self, manual: bool, cx: &mut Context<Self>) {
+        let previous = self.update.clone();
+        if matches!(
+            previous,
+            UpdateState::Checking | UpdateState::Installing { .. } | UpdateState::Ready { .. }
+        ) {
+            return;
+        }
+        self.update = UpdateState::Checking;
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { update::latest() }).await;
+            this.update(cx, |this, cx| {
+                this.update = match result {
+                    Ok(release) if update::is_newer(&release.version, &current_version()) => {
+                        if previous != UpdateState::Available(release.clone()) {
+                            this.log.push(
+                                None,
+                                Kind::Info,
+                                format!("SLOPP {} is available", release.version),
+                            );
+                        }
+                        UpdateState::Available(release)
+                    }
+                    Ok(_) => {
+                        if manual {
+                            this.log.push(None, Kind::Ok, "SLOPP is up to date");
+                        }
+                        UpdateState::UpToDate
+                    }
+                    Err(err) => {
+                        let error = format!("{err:#}");
+                        if manual {
+                            this.log.push(
+                                None,
+                                Kind::Error,
+                                format!("Checking for updates failed: {error}"),
+                            );
+                            UpdateState::Failed {
+                                error,
+                                release: None,
+                            }
+                        } else {
+                            // Offline, most likely; the next check may do.
+                            tracing::info!("checking for updates failed: {error}");
+                            previous
+                        }
+                    }
+                };
+                this.changed(cx);
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Downloads the available release and puts it in place of this SLOPP.
+    pub fn install_update(&mut self, cx: &mut Context<Self>) {
+        let release = match &self.update {
+            UpdateState::Available(release)
+            | UpdateState::Failed {
+                release: Some(release),
+                ..
+            } => release.clone(),
+            _ => return,
+        };
+        if !self.install.can_update() {
+            return;
+        }
+        let version = release.version.clone();
+        self.log
+            .push(None, Kind::Info, format!("Updating SLOPP to {version}…"));
+        self.update = UpdateState::Installing {
+            release: release.clone(),
+            progress: "Downloading…".into(),
+        };
+        enum Message {
+            Progress(String),
+            Done(Result<Restart, String>),
+        }
+        let (tx, rx) = async_channel::unbounded::<Message>();
+        let install = self.install.clone();
+        let wanted = release.clone();
+        std::thread::spawn(move || {
+            let result = install.install(&wanted, |p| {
+                let text = match p {
+                    Progress::Downloading {
+                        fraction: Some(f), ..
+                    } => format!("Downloading… {:.0}%", f * 100.0),
+                    Progress::Checking | Progress::Downloading { .. } => "Downloading…".into(),
+                    Progress::Unpacking { .. } => "Installing…".into(),
+                };
+                let _ = tx.send_blocking(Message::Progress(text));
+            });
+            let _ = tx.send_blocking(Message::Done(result.map_err(|e| format!("{e:#}"))));
+        });
+        cx.spawn(async move |this, cx| {
+            while let Ok(message) = rx.recv().await {
+                let done = matches!(message, Message::Done(_));
+                let ok = this.update(cx, |this, cx| {
+                    match message {
+                        Message::Progress(progress) => {
+                            this.update = UpdateState::Installing {
+                                release: release.clone(),
+                                progress,
+                            };
+                        }
+                        Message::Done(Ok(restart)) => {
+                            #[cfg(target_os = "linux")]
+                            let restart = match crate::appimage::launcher() {
+                                Some(launcher) if matches!(this.install, Install::AppImage(_)) => {
+                                    restart.through(launcher)
+                                }
+                                _ => restart,
+                            };
+                            let text = if restart.installs {
+                                format!(
+                                    "SLOPP {version} is downloaded: restart SLOPP to install it"
+                                )
+                            } else {
+                                format!("SLOPP {version} is installed: restart SLOPP to use it")
+                            };
+                            this.log.push(None, Kind::Ok, text);
+                            this.update = UpdateState::Ready {
+                                version: version.clone(),
+                                restart,
+                            };
+                        }
+                        Message::Done(Err(error)) => {
+                            this.log.push(
+                                None,
+                                Kind::Error,
+                                format!("Updating SLOPP failed: {error}"),
+                            );
+                            this.update = UpdateState::Failed {
+                                error,
+                                release: Some(release.clone()),
+                            };
+                        }
+                    }
+                    this.changed(cx);
+                });
+                if done || ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        self.changed(cx);
+    }
+
+    /// Quits and starts the update (or the Windows installer, which starts
+    /// it). The servers keep running for the new SLOPP.
+    pub fn restart_into_update(&mut self, cx: &mut Context<Self>) {
+        let UpdateState::Ready { restart, .. } = self.update.clone() else {
+            return;
+        };
+        // The new SLOPP must not find this one still answering, and this one
+        // must not remove the new one's socket as it quits.
+        crate::instance::release();
+        match restart.spawn() {
+            Ok(()) => {
+                self.restarting = true;
+                cx.quit();
+            }
+            Err(err) => {
+                self.log.push(
+                    None,
+                    Kind::Error,
+                    format!("Restarting SLOPP failed: {err:#}"),
+                );
+                cx.notify();
+            }
+        }
+    }
+
+    /// The available release's page, or the releases page.
+    pub fn open_release_page(&mut self, cx: &mut Context<Self>) {
+        let page = match &self.update {
+            UpdateState::Available(release)
+            | UpdateState::Installing { release, .. }
+            | UpdateState::Failed {
+                release: Some(release),
+                ..
+            } => release.page.clone(),
+            _ => update::RELEASES_PAGE.to_string(),
+        };
+        let result = desktop::open_url(&page);
+        self.report(result, cx);
     }
 
     pub fn clear_log(&mut self, cx: &mut Context<Self>) {

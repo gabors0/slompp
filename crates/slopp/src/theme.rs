@@ -235,7 +235,14 @@ pub fn apply(light: bool, cx: &mut App) {
         c.title_bar_border = Palette::border().into();
         c.switch = Palette::control().into();
         c.success = Palette::ok().into();
-        c.danger = Palette::fault().into();
+        // The window's close button: hovered it is filled with `danger` and
+        // its cross takes `danger_foreground`, which gpui-component's dark
+        // theme makes red too.
+        let danger: Hsla = Palette::fault().into();
+        c.danger = danger;
+        c.danger_hover = danger.blend(Hsla::white().opacity(0.1));
+        c.danger_active = danger.blend(Hsla::black().opacity(0.12));
+        c.danger_foreground = Hsla::white();
         c.warning = Palette::busy().into();
         c.scrollbar = Hsla::transparent_black();
         c.scrollbar_thumb = Palette::wash(0.18);

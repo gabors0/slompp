@@ -83,6 +83,15 @@ run it as a script block:
 there are also `-Version X.Y.Z`, `-AllUsers`, `-Force` (reinstall the same
 version) and `-Uninstall`.
 
+SLOPP looks for a new release when it opens and daily, and says so in its
+window (Settings → Updates turns that off, and has Check now). Its Update
+button replaces the AppImage, `SLOPP.app` or the programs from the tarball
+or the zip with the new release, checked against its SHA-256 digest, or
+downloads the new Windows setup; Restart SLOPP then starts the new version
+(running the setup first), and the servers keep running. A copy from Nix,
+a build from source or a folder SLOPP can't write to only hears about new
+releases.
+
 The steps below are the manual alternative.
 
 - **Linux:** make the AppImage executable (`chmod +x`) and run it. On launch
