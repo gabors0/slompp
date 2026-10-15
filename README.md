@@ -49,6 +49,17 @@ second copy, and so does a click on its Dock icon on macOS.
 Windows 10 or newer). Install the servers first, as below; SLOPP doesn't
 bundle them.
 
+On Linux and macOS, one script installs the servers and SLOPP:
+
+```sh
+curl -fsSL https://slopp.gs0.me/install.sh | sh
+```
+
+It uses `apt`, `dnf`, `pacman` or `zypper` (or Homebrew), then installs the
+AppImage or `SLOPP.app`. `sh -s -- --no-deps` installs SLOPP only,
+`--version X.Y.Z` a specific release. The steps below are the manual
+alternative.
+
 - **Linux:** make the AppImage executable (`chmod +x`) and run it. On launch
   it adds itself to your applications (a desktop file and an icon in
   `~/.local/share/applications` and `~/.local/share/icons`), which Wayland
