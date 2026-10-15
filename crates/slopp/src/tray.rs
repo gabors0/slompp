@@ -52,7 +52,7 @@ pub struct TrayState {
     pub modules: Vec<TrayModule>,
     /// The database admin tools that are installed.
     pub db_admins: Vec<DbAdmin>,
-    /// Whether the icon sits on a light panel, so it's drawn in black.
+    /// Whether the icon sits on a light panel, so it's drawn in dark grey.
     pub light_panel: bool,
 }
 
@@ -412,7 +412,7 @@ pub fn spawn(
 /// an S by a link on the left (top to middle) and one on the right (middle
 /// to bottom). The top unit's lamp is Apache's, the middle one's MySQL's.
 ///
-/// The units are solid white on dark panels and black on light ones, like
+/// The units are solid white on dark panels and dark grey on light ones, like
 /// the panel's other icons, with grey links. A lit lamp is a gradient of its
 /// colour over the unit's right side, fading out towards the middle.
 pub mod icon {
@@ -439,7 +439,7 @@ pub mod icon {
         /// For dark panels.
         White,
         /// For light panels.
-        Black,
+        Grey,
         /// A macOS template image, which AppKit tints to suit the menu bar:
         /// only alpha counts, so the links are half-transparent and there
         /// are no lamps.
@@ -449,24 +449,28 @@ pub mod icon {
 
     impl Ink {
         pub fn for_panel(light: bool) -> Self {
-            if light { Ink::Black } else { Ink::White }
+            if light { Ink::Grey } else { Ink::White }
         }
 
         fn colors(self) -> &'static MarkInk {
             match self {
                 Ink::White => &MarkInk::WHITE,
-                Ink::Black | Ink::Template => &MarkInk::BLACK,
+                Ink::Grey | Ink::Template => &MarkInk::GREY,
             }
         }
 
         fn unit(self) -> Rgb {
-            rgb(self.colors().unit)
+            match self {
+                // AppKit only reads the alpha.
+                Ink::Template => [0x00, 0x00, 0x00],
+                _ => rgb(self.colors().unit),
+            }
         }
 
         /// The links' colour and alpha.
         fn link(self) -> (Rgb, f32) {
             match self {
-                // As dark as the black ink's links on white.
+                // Lighter than the units, like the other inks' links.
                 Ink::Template => ([0x00, 0x00, 0x00], 0.55),
                 _ => (rgb(self.colors().link), 1.0),
             }
@@ -809,11 +813,11 @@ pub mod icon {
         }
 
         #[test]
-        fn black_ink_holds_the_lamp_solid_further_in() {
-            let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Black);
-            assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
+        fn grey_ink_holds_the_lamp_solid_further_in() {
+            let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Grey);
+            assert_eq!(pixel(&icon, 28, 6), [255, 0x5C, 0x61, 0x66]);
             assert_eq!(pixel(&icon, 20, 16), [255, 0xEF, 0xAC, 0x01]);
-            assert_eq!(pixel(&icon, 5, 11), [255, 0x73, 0x73, 0x73]);
+            assert_eq!(pixel(&icon, 5, 11), [255, 0xA4, 0xA7, 0xAA]);
         }
 
         #[test]
@@ -823,9 +827,9 @@ pub mod icon {
             assert_eq!(pixel(&on, 16, 8), [255, 0x14, 0x9A, 0x50]);
             assert_eq!(pixel(&on, 0, 0)[0], 0);
             assert_eq!(pixel(&on, 16, 3)[0], 0);
-            let off = lamp(32, Lamp::Off, Ink::Black);
+            let off = lamp(32, Lamp::Off, Ink::Grey);
             assert_eq!(pixel(&off, 16, 16)[0], 0);
-            assert_eq!(pixel(&off, 16, 8), [255, 0x73, 0x73, 0x73]);
+            assert_eq!(pixel(&off, 16, 8), [255, 0xA4, 0xA7, 0xAA]);
         }
 
         #[test]
