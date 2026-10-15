@@ -8,11 +8,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 
+use crate::install::{self, Package};
 use crate::net::{self, Listener};
 use crate::process::{self, Tracked};
 use crate::templates::conf_path;
 use crate::toolchain::PhpHandler;
-use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates, winget};
+use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates};
 
 /// Something that stops a module from starting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +181,13 @@ impl Stack {
                     hint: if cfg!(windows) {
                         "Install gets Apache Lounge's build with winget, \
                          or set the path of httpd.exe in Settings."
+                            .into()
                     } else {
-                        "Install Apache (httpd or apache2), or set its path in Settings."
-                    }
-                    .into(),
+                        format!(
+                            "Install gets it {}, or set its path in Settings.",
+                            install::VIA
+                        )
+                    },
                 }),
                 Some(h) if h.modules.is_none() => problems.push(Problem::Missing {
                     what: "Apache's modules directory",
@@ -197,10 +201,14 @@ impl Stack {
                                 "Install gets PHP's Thread Safe build, which has the Apache \
                                  module (php8apache2_4.dll), with winget, or set the module's \
                                  path in Settings."
+                                    .into()
                             } else {
-                                "Install PHP with PHP-FPM or the Apache module (libphp.so)."
-                            }
-                            .into(),
+                                format!(
+                                    "Install gets it {}, or set the path of PHP-FPM or the \
+                                     Apache module (libphp.so) in Settings.",
+                                    install::VIA
+                                )
+                            },
                         });
                     }
                 }
@@ -209,13 +217,15 @@ impl Stack {
                 if self.tools.mariadb.is_none() {
                     problems.push(Problem::Missing {
                         what: "MariaDB",
-                        hint: if cfg!(windows) {
-                            "Install gets it with winget, or set the path of mariadbd.exe \
-                             in Settings."
-                        } else {
-                            "Install the MariaDB server (mariadbd), or set its path in Settings."
-                        }
-                        .into(),
+                        hint: format!(
+                            "Install gets it {}, or set the path of {} in Settings.",
+                            install::VIA,
+                            if cfg!(windows) {
+                                "mariadbd.exe"
+                            } else {
+                                "mariadbd"
+                            }
+                        ),
                     });
                 }
             }
@@ -233,19 +243,16 @@ impl Stack {
         problems
     }
 
-    /// The packages that winget can install for what `module` is missing.
-    /// Only on Windows; elsewhere the system's package manager has them.
-    pub fn installable(&self, module: Module) -> Vec<winget::Package> {
-        if !cfg!(windows) {
-            return Vec::new();
-        }
-        winget::Package::ALL
+    /// The packages the system's package manager can install for what
+    /// `module` is missing ([`install::Installer`]).
+    pub fn installable(&self, module: Module) -> Vec<Package> {
+        Package::ALL
             .into_iter()
             .filter(|p| p.module() == module)
             .filter(|p| match p {
-                winget::Package::Apache => self.tools.httpd.is_none(),
-                winget::Package::Php => self.tools.php.is_none(),
-                winget::Package::MariaDb => self.tools.mariadb.is_none(),
+                Package::Apache => self.tools.httpd.is_none(),
+                Package::Php => self.tools.php.is_none(),
+                Package::MariaDb => self.tools.mariadb.is_none(),
             })
             .collect()
     }
@@ -511,10 +518,13 @@ impl Stack {
                     "-C".into(),
                     format!("Define PHP_MODULE_PATH \"{}\"", conf_path(lib)),
                 ]);
-                if cfg!(windows)
-                    && let Some(dir) = lib.parent()
-                {
-                    env = self.windows_php_env(dir)?;
+                if cfg!(windows) {
+                    if let Some(dir) = lib.parent() {
+                        env = self.windows_php_env(dir)?;
+                    }
+                } else {
+                    let cli = crate::toolchain::find_program(&["php"]);
+                    env = self.unix_php_env(cli.as_deref())?;
                 }
             }
             PhpHandler::Fpm(fpm) => {
@@ -527,7 +537,8 @@ impl Stack {
                         conf_path(&layout.php_fpm_socket())
                     ),
                 ]);
-                procs.push(self.start_php_fpm(fpm)?);
+                let fpm_env = self.unix_php_env(Some(fpm))?;
+                procs.push(self.start_php_fpm(fpm, fpm_env)?);
             }
         }
 
@@ -584,7 +595,41 @@ impl Stack {
         ])
     }
 
-    fn start_php_fpm(&self, fpm: &Path) -> anyhow::Result<Tracked> {
+    /// What PHP needs from its environment on Linux and macOS: when `php`
+    /// (the CLI beside the Apache module, or PHP-FPM) has extensions that
+    /// SLOPP's php.ini wants but doesn't load them by itself (Arch enables
+    /// mysqli in its own php.ini, which SLOPP's replaces), a `slopp.ini`
+    /// that loads them, in a `PHP_INI_SCAN_DIR` read after PHP's own (the
+    /// leading `:` keeps that). Nothing otherwise.
+    fn unix_php_env(
+        &self,
+        php: Option<&Path>,
+    ) -> anyhow::Result<Vec<(String, std::ffi::OsString)>> {
+        let layout = &self.layout;
+        let scan_dir = layout.php_scan_dir();
+        let ini = scan_dir.join("slopp.ini");
+        let unloaded = php
+            .map(|php| crate::toolchain::unloaded_extensions(php, &layout.php_ini()))
+            .unwrap_or_default();
+        if unloaded.is_empty() {
+            let _ = std::fs::remove_file(&ini);
+            return Ok(Vec::new());
+        }
+        tracing::info!("loading PHP extensions {unloaded:?} from {}", ini.display());
+        std::fs::create_dir_all(&scan_dir)
+            .with_context(|| format!("creating {}", scan_dir.display()))?;
+        std::fs::write(&ini, templates::php_extensions_ini(&unloaded))
+            .with_context(|| format!("writing {}", ini.display()))?;
+        let mut value = std::ffi::OsString::from(":");
+        value.push(scan_dir.as_os_str());
+        Ok(vec![("PHP_INI_SCAN_DIR".into(), value)])
+    }
+
+    fn start_php_fpm(
+        &self,
+        fpm: &Path,
+        env: Vec<(String, std::ffi::OsString)>,
+    ) -> anyhow::Result<Tracked> {
         let layout = &self.layout;
         std::fs::write(layout.php_fpm_conf(), templates::php_fpm_conf(layout))
             .with_context(|| format!("writing {}", layout.php_fpm_conf().display()))?;
@@ -596,7 +641,8 @@ impl Stack {
             .arg("--fpm-config")
             .arg(layout.php_fpm_conf())
             .arg("-c")
-            .arg(layout.php_ini());
+            .arg(layout.php_ini())
+            .envs(env);
         let child = process::spawn_detached(cmd, &layout.php_fpm_log())?;
         let tracked = self.keep(child);
 

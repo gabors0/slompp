@@ -461,7 +461,7 @@ fn find_program_prefixed(prefix: &str) -> Option<PathBuf> {
     found.pop()
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -480,6 +480,51 @@ fn run_capture(bin: &Path, args: &[&str]) -> Option<String> {
     let mut text = crate::process::decode(&out.stdout);
     text.push_str(&crate::process::decode(&out.stderr));
     Some(text)
+}
+
+/// The extensions in [`templates::EXTENSIONS`](crate::templates::EXTENSIONS)
+/// that `php` (the CLI, or PHP-FPM) has as shared objects but doesn't load
+/// with SLOPP's `ini` and its own scan directory, in load order: mysqlnd,
+/// where it's shared, goes before mysqli and pdo_mysql, which need it.
+pub fn unloaded_extensions(php: &Path, ini: &Path) -> Vec<&'static str> {
+    let ini = ini.to_string_lossy();
+    let Some(modules) = run_capture(php, &["-c", &ini, "-m"]) else {
+        return Vec::new();
+    };
+    let Some(dir) = run_capture(php, &["-c", &ini, "-i"])
+        .as_deref()
+        .and_then(|info| parse_php_info(info, "extension_dir"))
+    else {
+        return Vec::new();
+    };
+    unloaded_in(&parse_php_modules(&modules), Path::new(&dir))
+}
+
+fn unloaded_in(loaded: &[String], extension_dir: &Path) -> Vec<&'static str> {
+    std::iter::once("mysqlnd")
+        .chain(crate::templates::EXTENSIONS.iter().copied())
+        .filter(|e| !loaded.iter().any(|l| l.eq_ignore_ascii_case(e)))
+        .filter(|e| extension_dir.join(format!("{e}.so")).is_file())
+        .collect()
+}
+
+/// `php -m`'s module names, without its `[PHP Modules]` headings.
+fn parse_php_modules(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('['))
+        .map(String::from)
+        .collect()
+}
+
+/// `extension_dir => /usr/lib/php/modules => /usr/lib/php/modules` in
+/// `php -i` → the local value.
+fn parse_php_info(info: &str, name: &str) -> Option<String> {
+    info.lines().find_map(|l| {
+        let rest = l.strip_prefix(name)?.strip_prefix(" => ")?;
+        let value = rest.split(" => ").next()?.trim();
+        (!value.is_empty() && value != "no value").then(|| value.to_string())
+    })
 }
 
 /// `Server version: Apache/2.4.69 (Unix)` → `2.4.69`.
@@ -605,6 +650,48 @@ Server MPM:     event
         assert_eq!(
             versioned_dirs(dir.path(), "php"),
             [dir.path().join("php84")]
+        );
+    }
+
+    #[test]
+    fn finds_extensions_php_has_but_does_not_load() {
+        let modules = parse_php_modules(
+            "[PHP Modules]\nCore\nctype\nmbstring\nmysqlnd\nPDO\n\n[Zend Modules]\nZend OPcache\n",
+        );
+        assert!(modules.contains(&"mysqlnd".to_string()));
+        assert!(!modules.iter().any(|m| m.starts_with('[')));
+        assert_eq!(
+            parse_php_info(
+                "extension_dir => /usr/lib/php/modules => /usr/lib/php/modules\n",
+                "extension_dir"
+            )
+            .as_deref(),
+            Some("/usr/lib/php/modules")
+        );
+        assert_eq!(
+            parse_php_info("extension_dir => no value => no value", "extension_dir"),
+            None
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        for so in [
+            "curl.so",
+            "mysqli.so",
+            "pdo_mysql.so",
+            "mbstring.so",
+            "bcmath.so",
+        ] {
+            std::fs::write(dir.path().join(so), "").unwrap();
+        }
+        // mbstring is built in, bcmath isn't one SLOPP asks for, gd isn't there.
+        assert_eq!(
+            unloaded_in(&modules, dir.path()),
+            ["curl", "mysqli", "pdo_mysql"]
+        );
+        std::fs::write(dir.path().join("mysqlnd.so"), "").unwrap();
+        assert_eq!(
+            unloaded_in(&parse_php_modules("Core\n"), dir.path())[0],
+            "mysqlnd"
         );
     }
 

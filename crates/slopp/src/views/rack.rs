@@ -236,7 +236,7 @@ fn render_actions(
     } else {
         toggle.primary()
     };
-    // Instead of Start while winget can install what's missing.
+    // Instead of Start while the package manager can install what's missing.
     let install = (missing && !running && !stack.installable(m).is_empty()).then(|| {
         let getting = ctl.getting.as_ref().map(|(module, _)| *module);
         Button::new(SharedString::from(format!("install-{id}")))
@@ -244,7 +244,10 @@ fn render_actions(
             .small()
             .primary()
             .label("Install")
-            .tooltip("Install the missing servers with winget")
+            .tooltip(format!(
+                "Install the missing servers {}",
+                slopp_core::install::VIA
+            ))
             .loading(getting == Some(m))
             .disabled(getting.is_some())
             .on_click(on_controller(cx, move |c, cx| c.install_servers(m, cx)))

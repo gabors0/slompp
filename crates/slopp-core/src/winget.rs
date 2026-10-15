@@ -11,13 +11,12 @@
 //! dialogs, the MSI registers no Windows service (its only default for
 //! `SERVICENAME` is set by a dialog), so nothing else takes MariaDB's port.
 
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 
-use crate::Module;
+use crate::install::{self, Package};
 
 /// Where to get winget when it's missing: App Installer in the Microsoft
 /// Store, which brings it.
@@ -38,78 +37,49 @@ const PACKAGE_ALREADY_INSTALLED: i32 = 0x8A150061_u32 as i32;
 /// replaced the file and the community repository hasn't caught up yet.
 const INSTALLER_HASH_MISMATCH: i32 = 0x8A150011_u32 as i32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Package {
-    Apache,
-    Php,
-    MariaDb,
+/// The winget package identifier.
+pub fn id(package: Package) -> String {
+    match package {
+        Package::Apache => "ApacheLounge.httpd".into(),
+        Package::Php => format!("PHP.PHP.{PHP_SERIES}"),
+        Package::MariaDb => "MariaDB.Server".into(),
+    }
 }
 
-impl Package {
-    pub const ALL: [Package; 3] = [Package::Apache, Package::Php, Package::MariaDb];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Package::Apache => "Apache",
-            Package::Php => "PHP",
-            Package::MariaDb => "MariaDB",
-        }
+fn publisher(package: Package) -> &'static str {
+    match package {
+        Package::Apache => "Apache Lounge",
+        Package::Php => "php.net",
+        Package::MariaDb => "mariadb.org",
     }
+}
 
-    /// The module that runs it.
-    pub fn module(self) -> Module {
-        match self {
-            Package::Apache | Package::Php => Module::Apache,
-            Package::MariaDb => Module::MySql,
-        }
+/// Where to get it by hand, where SLOPP finds it.
+fn by_hand(package: Package) -> &'static str {
+    match package {
+        Package::Apache => "get Apache from apachelounge.com and unpack it to C:\\Apache24",
+        Package::Php => "get PHP's Thread Safe zip from windows.php.net and unpack it to C:\\php",
+        Package::MariaDb => "get MariaDB's installer from mariadb.org",
     }
+}
 
-    /// The winget package identifier.
-    pub fn id(self) -> String {
-        match self {
-            Package::Apache => "ApacheLounge.httpd".into(),
-            Package::Php => format!("PHP.PHP.{PHP_SERIES}"),
-            Package::MariaDb => "MariaDB.Server".into(),
-        }
-    }
-
-    fn publisher(self) -> &'static str {
-        match self {
-            Package::Apache => "Apache Lounge",
-            Package::Php => "php.net",
-            Package::MariaDb => "mariadb.org",
-        }
-    }
-
-    /// Where to get it by hand, where SLOPP finds it.
-    fn by_hand(self) -> &'static str {
-        match self {
-            Package::Apache => "get Apache from apachelounge.com and unpack it to C:\\Apache24",
-            Package::Php => {
-                "get PHP's Thread Safe zip from windows.php.net and unpack it to C:\\php"
-            }
-            Package::MariaDb => "get MariaDB's installer from mariadb.org",
-        }
-    }
-
-    fn install_args(self) -> Vec<String> {
-        // No `--silent`: for an MSI that would be `/quiet`, which can't ask
-        // for elevation. winget's default shows the MSI's progress bar and
-        // the UAC prompt, and still skips the setup dialogs.
-        [
-            "install",
-            "--id",
-            &self.id(),
-            "--exact",
-            "--source",
-            "winget",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--disable-interactivity",
-        ]
-        .map(String::from)
-        .to_vec()
-    }
+fn install_args(package: Package) -> Vec<String> {
+    // No `--silent`: for an MSI that would be `/quiet`, which can't ask
+    // for elevation. winget's default shows the MSI's progress bar and
+    // the UAC prompt, and still skips the setup dialogs.
+    [
+        "install",
+        "--id",
+        &id(package),
+        "--exact",
+        "--source",
+        "winget",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// winget, if this Windows has it.
@@ -135,92 +105,30 @@ pub fn install(
     package: Package,
     mut progress: impl FnMut(String),
 ) -> anyhow::Result<()> {
-    let mut child = crate::process::command(winget)
-        .args(package.install_args())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("starting winget")?;
+    let mut cmd = crate::process::command(winget);
+    cmd.args(install_args(package)).stdin(Stdio::null());
+    let outcome = install::run(cmd, &mut progress)?;
 
-    let mut stdout = child.stdout.take().expect("piped");
-    let mut stderr = child.stderr.take().expect("piped");
-    let errors = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        bytes
-    });
-    let mut lines = Lines::default();
-    let mut buf = [0u8; 4096];
-    loop {
-        match stdout.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                for line in lines.push(&buf[..n]) {
-                    progress(line);
-                }
-            }
-        }
-    }
-    for line in lines.push(b"\n") {
-        progress(line);
-    }
-    let status = child.wait().context("waiting for winget")?;
-    let errors = crate::process::decode(&errors.join().unwrap_or_default());
-
-    match status.code() {
+    match outcome.code {
         Some(0 | UPDATE_NOT_APPLICABLE | PACKAGE_ALREADY_INSTALLED) => Ok(()),
         // `--ignore-security-hash` would install an unchecked download (and
         // needs an admin to allow it), so say where else to get it.
         Some(INSTALLER_HASH_MISMATCH) => bail!(
             "winget's package doesn't match the file {} now serves; winget's \
              repository usually catches up within days. Try again later, or {}.",
-            package.publisher(),
-            package.by_hand()
+            publisher(package),
+            by_hand(package)
         ),
         code => {
-            let mut detail: Vec<&str> = lines
-                .last
-                .iter()
-                .map(String::as_str)
-                .chain(errors.lines().map(str::trim).filter(|l| !l.is_empty()))
-                .collect();
-            detail.dedup();
+            let detail = outcome.detail();
             let code = code.map_or("no exit code".into(), |c| {
                 format!("exit code {:#X}", c as u32)
             });
             if detail.is_empty() {
                 bail!("winget failed ({code})");
             }
-            bail!("winget failed ({code}): {}", detail.join(" "))
+            bail!("winget failed ({code}): {detail}")
         }
-    }
-}
-
-/// Splits winget's output into lines worth showing. Progress bars and
-/// spinners redraw with `\r`, so each redraw is a line of its own; lines
-/// without a letter (a spinner, a bare bar) are dropped.
-#[derive(Default)]
-struct Lines {
-    pending: Vec<u8>,
-    /// The last line shown, for an error message.
-    last: Option<String>,
-}
-
-impl Lines {
-    fn push(&mut self, bytes: &[u8]) -> Vec<String> {
-        self.pending.extend_from_slice(bytes);
-        let mut out = Vec::new();
-        while let Some(end) = self.pending.iter().position(|&b| b == b'\n' || b == b'\r') {
-            let line: Vec<u8> = self.pending.drain(..=end).collect();
-            let text = crate::process::decode(&line[..line.len() - 1]);
-            let text = text.trim();
-            if text.chars().any(char::is_alphabetic) {
-                self.last = Some(text.to_string());
-                out.push(text.to_string());
-            }
-        }
-        out
     }
 }
 
@@ -287,7 +195,7 @@ mod tests {
 
     #[test]
     fn installs_the_exact_package_from_winget() {
-        let args = Package::Php.install_args();
+        let args = install_args(Package::Php);
         assert_eq!(args[..3], ["install", "--id", "PHP.PHP.8.5"]);
         assert!(args.contains(&"--exact".to_string()));
         assert!(args.windows(2).any(|w| w == ["--source", "winget"]));
@@ -318,24 +226,5 @@ mod tests {
             ]
         );
         assert!(program_dirs_in(&dir.path().join("missing")).is_empty());
-    }
-
-    #[test]
-    fn splits_progress_into_lines() {
-        let mut lines = Lines::default();
-        assert!(
-            lines
-                .push(b"Found PHP 8.5 [PHP.PHP.8.5] Version")
-                .is_empty()
-        );
-        assert_eq!(
-            lines.push(b" 8.5.10\r\n"),
-            ["Found PHP 8.5 [PHP.PHP.8.5] Version 8.5.10"]
-        );
-        assert_eq!(
-            lines.push("\r   - \r   \\ \r  ██████  1.00 MB / 32.0 MB\r".as_bytes()),
-            ["██████  1.00 MB / 32.0 MB"]
-        );
-        assert_eq!(lines.last.as_deref(), Some("██████  1.00 MB / 32.0 MB"));
     }
 }
