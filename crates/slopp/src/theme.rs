@@ -34,7 +34,8 @@ pub enum Lamp {
 }
 
 /// The colours of SLOPP's mark, the S of three rack units: white units for
-/// dark backgrounds, black ones for light. The title bar and the tray icon
+/// dark backgrounds, dark grey ones (Ayu Light's text colour) for light.
+/// The title bar and the tray icon
 /// draw it the same way.
 pub struct MarkInk {
     pub unit: u32,
@@ -44,8 +45,8 @@ pub struct MarkInk {
     pub busy: u32,
     pub fault: u32,
     /// Where a lit lamp's gradient becomes opaque, as a fraction of the way
-    /// from its transparent end: black units keep it solid for longer, so
-    /// the colour holds up against the black.
+    /// from its transparent end: grey units keep it solid for longer, so
+    /// the colour holds up against the grey.
     pub lamp_solid: f32,
 }
 
@@ -58,9 +59,9 @@ impl MarkInk {
         fault: 0xD93327,
         lamp_solid: 1.0,
     };
-    pub const BLACK: MarkInk = MarkInk {
-        unit: 0x000000,
-        link: 0x737373,
+    pub const GREY: MarkInk = MarkInk {
+        unit: 0x5C6166,
+        link: 0xA4A7AA,
         on: 0x1F8F58,
         busy: 0xEFAC01,
         fault: 0xC5372B,
@@ -128,7 +129,7 @@ impl Palette {
     }
     /// The mark's colours for the window's appearance.
     pub fn mark() -> &'static MarkInk {
-        pick(&MarkInk::WHITE, &MarkInk::BLACK)
+        pick(&MarkInk::WHITE, &MarkInk::GREY)
     }
     /// `syntax.string`; light uses green's darkest step, to stay readable
     /// as text.

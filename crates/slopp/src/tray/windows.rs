@@ -357,9 +357,9 @@ fn show_menu(hwnd: HWND, x: i32, y: i32) {
             let flags = MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED };
             AppendMenuW(menu, flags, id, wide(&label).as_ptr());
             // Classic menus are light whatever the theme, so the lamps get
-            // the black ink. Other items have no picture on Windows.
+            // the grey ink. Other items have no picture on Windows.
             if let MenuIcon::Lamp(lamp) = icon {
-                let bitmap = make_bitmap(&icon::lamp(lamp_size, lamp, icon::Ink::Black), true);
+                let bitmap = make_bitmap(&icon::lamp(lamp_size, lamp, icon::Ink::Grey), true);
                 if !bitmap.is_null() {
                     let info = MENUITEMINFOW {
                         cbSize: size_of::<MENUITEMINFOW>() as u32,
