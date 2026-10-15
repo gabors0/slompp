@@ -61,11 +61,14 @@ On Linux and macOS, one script installs the servers and SLOPP:
 curl -fsSL https://slopp.gs0.me/install.sh | sh
 ```
 
-It uses `apt`, `dnf`, `pacman` or `zypper` (or Homebrew, which gets Mailpit
-too), then installs the AppImage or `SLOPP.app`; on Linux the AppImage then
-downloads Mailpit from GitHub. `sh -s -- --no-deps` installs SLOPP only,
-`--version X.Y.Z` a specific release. The steps below are the manual
-alternative.
+It installs the AppImage into `~/.local/bin` or `SLOPP.app` into
+Applications, checked against the release's SHA-256 digests, then has
+`sloppctl install-servers` add the servers that are missing, as the Install
+button does: `apt`, `dnf` or `pacman` through `pkexec` (or Homebrew), and on
+Linux Mailpit from GitHub. Run it again to update. After `sh -s --`:
+`--no-deps` installs SLOPP only, `--version X.Y.Z` a specific release,
+`--uninstall` stops the servers and removes SLOPP but keeps the stack and
+the settings. The steps below are the manual alternative.
 
 - **Linux:** make the AppImage executable (`chmod +x`) and run it. On launch
   it adds itself to your applications (a desktop file and an icon in
