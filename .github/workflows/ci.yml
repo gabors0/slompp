@@ -128,10 +128,24 @@ jobs:
           # The packages and the PHP series of crates/slopp-core/src/winget.rs.
           # --silent, unlike SLOPP: nobody is here to click, and the runner is
           # already elevated for MariaDB's MSI.
+          $hashMismatch = -1978335215  # APPINSTALLER_CLI_ERROR_INSTALLER_HASH_MISMATCH
           foreach ($id in 'ApacheLounge.httpd', 'PHP.PHP.8.5', 'MariaDB.Server', 'axllent.mailpit') {
             winget install --exact --id $id --source winget --silent --disable-interactivity `
               --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -ne 0) { throw "winget install $id failed ($LASTEXITCODE)" }
+            if ($LASTEXITCODE -eq $hashMismatch -and $id -eq 'ApacheLounge.httpd') {
+              # Apache Lounge replaces its zips in place, so winget's manifest
+              # often lists a stale hash (users see the same, and SLOPP says
+              # so). Take the manifest's zip as is, unpacked where Apache
+              # Lounge's readme puts it: C:\Apache24, which SLOPP searches.
+              $url = (winget show --exact --id $id --source winget |
+                Select-String 'Installer Url:\s*(\S+)').Matches[0].Groups[1].Value
+              Write-Host "winget's hash for $id is stale; unpacking $url to C:\Apache24"
+              Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\httpd.zip"
+              Expand-Archive "$env:RUNNER_TEMP\httpd.zip" -DestinationPath C:\
+              if (-not (Test-Path C:\Apache24\bin\httpd.exe)) { throw 'no C:\Apache24\bin\httpd.exe' }
+            } elseif ($LASTEXITCODE -ne 0) {
+              throw "winget install $id failed ($LASTEXITCODE)"
+            }
           }
       - name: Check which programs SLOPP finds, and run the tests
         shell: pwsh
