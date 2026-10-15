@@ -461,7 +461,7 @@ fn find_program_prefixed(prefix: &str) -> Option<PathBuf> {
     found.pop()
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

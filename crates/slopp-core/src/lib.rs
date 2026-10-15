@@ -7,9 +7,12 @@
 //! manages them, like the XAMPP control panel does.
 
 pub mod adminer;
+pub mod brew;
 pub mod dbadmin;
 pub mod desktop;
+pub mod install;
 pub mod layout;
+pub mod linux;
 pub mod module;
 pub mod net;
 pub mod phpmyadmin;

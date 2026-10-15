@@ -8,11 +8,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 
+use crate::install::{self, Package};
 use crate::net::{self, Listener};
 use crate::process::{self, Tracked};
 use crate::templates::conf_path;
 use crate::toolchain::PhpHandler;
-use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates, winget};
+use crate::{DbAdmin, Layout, Module, Settings, Toolchain, setup, templates};
 
 /// Something that stops a module from starting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +181,13 @@ impl Stack {
                     hint: if cfg!(windows) {
                         "Install gets Apache Lounge's build with winget, \
                          or set the path of httpd.exe in Settings."
+                            .into()
                     } else {
-                        "Install Apache (httpd or apache2), or set its path in Settings."
-                    }
-                    .into(),
+                        format!(
+                            "Install gets it {}, or set its path in Settings.",
+                            install::VIA
+                        )
+                    },
                 }),
                 Some(h) if h.modules.is_none() => problems.push(Problem::Missing {
                     what: "Apache's modules directory",
@@ -197,10 +201,14 @@ impl Stack {
                                 "Install gets PHP's Thread Safe build, which has the Apache \
                                  module (php8apache2_4.dll), with winget, or set the module's \
                                  path in Settings."
+                                    .into()
                             } else {
-                                "Install PHP with PHP-FPM or the Apache module (libphp.so)."
-                            }
-                            .into(),
+                                format!(
+                                    "Install gets it {}, or set the path of PHP-FPM or the \
+                                     Apache module (libphp.so) in Settings.",
+                                    install::VIA
+                                )
+                            },
                         });
                     }
                 }
@@ -209,13 +217,15 @@ impl Stack {
                 if self.tools.mariadb.is_none() {
                     problems.push(Problem::Missing {
                         what: "MariaDB",
-                        hint: if cfg!(windows) {
-                            "Install gets it with winget, or set the path of mariadbd.exe \
-                             in Settings."
-                        } else {
-                            "Install the MariaDB server (mariadbd), or set its path in Settings."
-                        }
-                        .into(),
+                        hint: format!(
+                            "Install gets it {}, or set the path of {} in Settings.",
+                            install::VIA,
+                            if cfg!(windows) {
+                                "mariadbd.exe"
+                            } else {
+                                "mariadbd"
+                            }
+                        ),
                     });
                 }
             }
@@ -233,19 +243,16 @@ impl Stack {
         problems
     }
 
-    /// The packages that winget can install for what `module` is missing.
-    /// Only on Windows; elsewhere the system's package manager has them.
-    pub fn installable(&self, module: Module) -> Vec<winget::Package> {
-        if !cfg!(windows) {
-            return Vec::new();
-        }
-        winget::Package::ALL
+    /// The packages the system's package manager can install for what
+    /// `module` is missing ([`install::Installer`]).
+    pub fn installable(&self, module: Module) -> Vec<Package> {
+        Package::ALL
             .into_iter()
             .filter(|p| p.module() == module)
             .filter(|p| match p {
-                winget::Package::Apache => self.tools.httpd.is_none(),
-                winget::Package::Php => self.tools.php.is_none(),
-                winget::Package::MariaDb => self.tools.mariadb.is_none(),
+                Package::Apache => self.tools.httpd.is_none(),
+                Package::Php => self.tools.php.is_none(),
+                Package::MariaDb => self.tools.mariadb.is_none(),
             })
             .collect()
     }

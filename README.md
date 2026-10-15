@@ -88,7 +88,12 @@ nix develop -c cargo run -p slopp
 
 On other Linux distributions, install Apache, PHP-FPM (or PHP's Apache
 module) and the MariaDB server with your package manager, then
-`cargo run -p slopp`. SLOPP looks for them on `PATH` and in the usual
+`cargo run -p slopp`. On Debian, Ubuntu, Fedora and Arch (and their
+relatives) the Install button on a module whose servers are missing does
+that for you: it asks for your password with `pkexec` and runs apt, dnf or
+pacman. On Debian and Ubuntu it also stops and disables the system's
+`apache2` and `mariadb` services it installed, which would take the stack's
+ports. SLOPP looks for them on `PATH` and in the usual
 system locations; Settings → Programs takes explicit paths.
 
 On macOS, with [Homebrew](https://brew.sh) and Xcode (GPUI compiles Metal
@@ -105,6 +110,8 @@ prefers and which runs PHP as mod_php like XAMPP (Apple's Apache only loads
 signed modules, so PHP goes through PHP-FPM there). Homebrew's programs are
 found wherever they are, linked or not, also when SLOPP is started from the
 Dock without your shell's `PATH`. MacPorts' `/opt/local` is searched too.
+With Homebrew installed, the Install button on a module whose servers are
+missing runs `brew install` for them (`httpd`, `php`, `mariadb`).
 
 On Windows (new, so expect rough edges), the Install button on a module
 whose servers are missing gets them with [winget](https://aka.ms/getwinget),
