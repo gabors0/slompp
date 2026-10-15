@@ -188,9 +188,11 @@ p { margin: 0; }
 /* Segmented control (Appearance) */
 .segmented { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; }
 .segmented button {
-  height: 22px; padding: 0 9px; border: 0; border-radius: 5px; background: none;
-  font: 400 12px/1 var(--sans); color: var(--text-2); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none;
+  color: var(--text-2); cursor: pointer;
 }
+.segmented svg { width: 14px; height: 14px; display: block; }
 .segmented button:hover { color: var(--text); }
 .segmented button[aria-pressed="true"] { background: var(--face); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
@@ -450,10 +452,13 @@ footer a { color: var(--text-2); }
       <a class="tab opt" href="#sloppctl" data-section="sloppctl">sloppctl</a>
     </nav>
     <div class="end">
+      <!-- Icons: Lucide's monitor, moon and sun (lucide-static 1.57.0). Copyright (c) 2026 Lucide Icons and Contributors.
+           ISC License: Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee
+           is hereby granted, provided that the above copyright notice and this permission notice appear in all copies. -->
       <div class="segmented" role="group" aria-label="Appearance">
-        <button type="button" data-mode="system">System</button>
-        <button type="button" data-mode="dark">Dark</button>
-        <button type="button" data-mode="light">Light</button>
+        <button type="button" data-mode="system" aria-label="System" title="System"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></button>
+        <button type="button" data-mode="dark" aria-label="Dark" title="Dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg></button>
+        <button type="button" data-mode="light" aria-label="Light" title="Light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></button>
       </div>
       <a class="btn ghost gh" href="https://github.com/gabors0/slopp">GitHub</a>
     </div>
@@ -467,7 +472,7 @@ footer a { color: var(--text-2); }
         <div class="actions">
           <a class="btn primary lg" id="download" href="https://github.com/gabors0/slopp/releases/latest"><span>Download</span> <span class="sub" id="version">0.2.3</span></a>
           <a class="btn lg" href="#install">All platforms</a>
-          <a class="btn ghost lg" href="https://github.com/gabors0/slopp">Source</a>
+          <a class="btn lg" href="https://github.com/gabors0/slopp">Source code</a>
         </div>
       </div>
       <div class="hero-mark">
@@ -738,7 +743,7 @@ mailpit/          <span class="c">the mail PHP sent</span></pre>
 
   <footer>
     <span>Free software under the <a href="https://github.com/gabors0/slopp/blob/main/LICENSE">GPL 3.0 or later</a>. Apache httpd, PHP, MariaDB, Mailpit, phpMyAdmin and Adminer have their own licenses.</span>
-    <span>Built with <a href="https://gpui-kit.com">gpui-kit</a>. Colours from <a href="https://github.com/ayu-theme/ayu-colors">Ayu</a>. Set in IBM Plex.</span>
+    <span>Built with <a href="https://gpui-kit.com">gpui-kit</a>. Colours from <a href="https://github.com/ayu-theme/ayu-colors">Ayu</a>, icons from <a href="https://lucide.dev">Lucide</a>. Set in IBM Plex.</span>
   </footer>
 </div>
 
