@@ -5,6 +5,7 @@
 #
 #   ubuntu   apt's Apache with PHP-FPM, and with mod_php (prefork)
 #   macos    Homebrew's httpd with mod_php, and Apple's httpd with PHP-FPM
+#   windows  winget's packages, the ones the Install button gets (mod_php)
 #
 # Releases are release.yml's; tag pushes don't run this.
 name: CI
@@ -111,3 +112,42 @@ jobs:
             mod_php) grep -q '(mod_php)' paths.txt ;;
           esac
       - run: cargo test --locked -p slopp-core --test servers -- --ignored
+
+  servers-windows:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: servers (windows-2025, mod_php)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the servers (winget)
+        shell: pwsh
+        run: |
+          winget --version
+          # The packages and the PHP series of crates/slopp-core/src/winget.rs.
+          # --silent, unlike SLOPP: nobody is here to click, and the runner is
+          # already elevated for MariaDB's MSI.
+          foreach ($id in 'ApacheLounge.httpd', 'PHP.PHP.8.5', 'MariaDB.Server', 'axllent.mailpit') {
+            winget install --exact --id $id --source winget --silent --disable-interactivity `
+              --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -ne 0) { throw "winget install $id failed ($LASTEXITCODE)" }
+          }
+      - name: Check which programs SLOPP finds, and run the tests
+        shell: pwsh
+        run: |
+          # The image comes with its own PHP (not necessarily the Thread Safe
+          # build, which alone has the Apache module), Apache and MySQL, and
+          # SLOPP searches PATH before winget's folders. Leave them out, so this
+          # tests what SLOPP finds after its Install button: winget puts its
+          # packages on the user's PATH, which this shell (like a running
+          # panel) doesn't see.
+          $env:Path = ($env:Path -split ';' | Where-Object {
+            $_ -and $_ -notmatch '\\tools\\(php|Apache)|\\MySQL\\'
+          }) -join ';'
+          cargo run --locked -q -p slopp-core --bin sloppctl -- paths | Tee-Object -Variable paths
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not ($paths -match '\(mod_php\)')) { throw 'PHP is not mod_php' }
+          if ($paths -match 'not found') { throw 'a program is missing' }
+          cargo test --locked -p slopp-core --test servers -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

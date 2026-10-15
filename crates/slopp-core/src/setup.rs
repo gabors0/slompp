@@ -38,9 +38,7 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
     )?;
     write_once(&layout.httpd_ssl_conf(), &templates::httpd_ssl_conf(layout))?;
     write_once(&layout.php_ini(), &templates::php_ini(layout))?;
-    if !cfg!(windows) {
-        ensure_php_mail(layout)?;
-    }
+    ensure_php_mail(layout)?;
     write_once(&layout.my_cnf(), &templates::my_cnf(layout))?;
 
     if !layout.mime_types().exists() {
@@ -60,15 +58,15 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
     Ok(())
 }
 
-/// Adds the mail section to a php.ini written before SLOPP had Mailpit, so
-/// `mail()` goes there too. Only while php.ini doesn't mention
-/// `sendmail_path` at all: commenting the line out keeps it out. Returns
-/// whether it added it.
+/// Adds the mail section to a php.ini written before SLOPP had Mailpit (on
+/// Windows, before it set `sendmail_from`), so `mail()` goes there too. Only
+/// while php.ini doesn't mention `sendmail_path` (Windows: `sendmail_from`)
+/// at all: commenting the line out keeps it out. Returns whether it added it.
 pub fn ensure_php_mail(layout: &Layout) -> anyhow::Result<bool> {
     let path = layout.php_ini();
     let ini =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    if ini.contains("sendmail_path") {
+    if ini.contains(templates::php_mail_setting(cfg!(windows))) {
         return Ok(false);
     }
     let mut ini = ini.trim_end().to_string();
@@ -237,7 +235,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(layout.php_ini()).unwrap(), ini);
 
         // Commented out, it stays out.
-        std::fs::write(layout.php_ini(), ";sendmail_path = x\n").unwrap();
+        let setting = templates::php_mail_setting(cfg!(windows));
+        std::fs::write(layout.php_ini(), format!(";{setting} = x\n")).unwrap();
         assert!(!ensure_php_mail(&layout).unwrap());
     }
 

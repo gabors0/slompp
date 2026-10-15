@@ -392,7 +392,8 @@ fn mailpit_catches_mail_and_keeps_it() {
     fx.stop(Module::Mailpit);
 }
 
-#[cfg(unix)]
+/// Through run/sendmail on Linux and macOS, over SMTP on Windows, where PHP
+/// also needs php.ini's `sendmail_from` for a message without `From:`.
 #[test]
 #[ignore = "starts Mailpit, Apache and PHP"]
 fn php_mail_goes_to_mailpit() {

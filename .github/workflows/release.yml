@@ -165,11 +165,23 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           body: |
-            SLOPP runs the stock servers, so install them first: Apache, PHP-FPM
-            (or PHP's Apache module) and the MariaDB server from your package
-            manager on Linux, `brew install php mariadb` on macOS, and on
-            Windows Apache Lounge's Apache, PHP's Thread Safe build and
-            MariaDB's installer (see the README).
+            One command installs SLOPP, checked against the release's SHA-256
+            digests, then adds the servers that are missing: Apache, PHP and
+            MariaDB with the system's package manager, and Mailpit with it too
+            (on Linux, from Mailpit's GitHub releases):
+
+            ```sh
+            curl -fsSL https://slopp.gs0.me/install.sh | sh    # Linux, macOS
+            ```
+
+            ```powershell
+            irm https://slopp.gs0.me/install.ps1 | iex         # Windows
+            ```
+
+            Run it again to update; from 0.3.1 on, SLOPP also offers its
+            updates itself (Settings → Updates). By hand instead: download a
+            file below, then get the servers with a module's Install button
+            (or yourself; see the README).
 
             **Linux** (x86_64, glibc 2.39 or newer): download the AppImage,
             make it executable (`chmod +x`) and run it. It adds itself to the
