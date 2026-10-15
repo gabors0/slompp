@@ -72,12 +72,16 @@ impl Fixture {
         assert_eq!(status.pids.len(), pids.len(), "{module}: {status:?}");
     }
 
-    /// Stops `module`, which must exit on its own, and checks nothing of it
-    /// is left.
+    /// Stops `module`, which must exit on its own (but for Mailpit on
+    /// Windows), and checks nothing of it is left.
     fn stop(&self, module: Module) {
         let layout = self.stack.layout();
         let killed = self.stack.stop(module).unwrap();
-        assert!(!killed, "{module} had to be killed");
+        // Windows has no SIGTERM, and Mailpit, unlike Apache and MariaDB,
+        // has no shutdown event to set, so process::terminate kills it.
+        if !(cfg!(windows) && module == Module::Mailpit) {
+            assert!(!killed, "{module} had to be killed");
+        }
         let status = self.stack.status(module);
         assert!(!status.running(), "{status:?}");
         assert!(!layout.pid_file(module).exists());
