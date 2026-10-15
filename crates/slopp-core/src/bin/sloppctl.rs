@@ -8,10 +8,10 @@ use slopp_core::install::{self, Installer};
 use slopp_core::{DbAdmin, Module, Settings, Stack, net};
 
 const USAGE: &str = "\
-Usage: sloppctl <command> [apache|mysql]
+Usage: sloppctl <command> [apache|mysql|mailpit]
 
 Commands:
-  start [module]       Start Apache and MySQL, or one of them
+  start [module]       Start Apache, MySQL and Mailpit, or one of them
   stop [module]        Stop them
   restart [module]     Stop, then start
   status               Show what's running
@@ -36,7 +36,7 @@ fn main() -> ExitCode {
         Some(id) => match Module::from_id(id) {
             Some(m) => vec![m],
             None => {
-                eprintln!("Unknown module '{id}'. Use apache or mysql.");
+                eprintln!("Unknown module '{id}'. Use apache, mysql or mailpit.");
                 return ExitCode::from(2);
             }
         },
@@ -204,6 +204,10 @@ fn paths(stack: &Stack) {
         "mariadbd      {}",
         show(tools.mariadb.as_ref().map(|m| m.server.as_path()))
     );
+    println!(
+        "mailpit       {}",
+        show(tools.mailpit.as_ref().map(|m| m.bin.as_path()))
+    );
 }
 
 fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
@@ -212,7 +216,7 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         println!("Nothing to install: the servers were found.");
         return true;
     }
-    let installer = match Installer::find(&packages) {
+    let installer = match Installer::find(&packages, stack.layout()) {
         Ok(installer) => installer,
         Err(unavailable) => {
             eprintln!("{}", unavailable.message);
@@ -220,9 +224,9 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         }
     };
     println!(
-        "Installing {} with {}...",
+        "Installing {} {}...",
         install::names(&packages),
-        installer.name()
+        installer.via()
     );
     let ok = match installer.install(&packages, |line| println!("  {line}")) {
         Ok(()) => true,

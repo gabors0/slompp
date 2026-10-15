@@ -20,6 +20,7 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
         layout.apache_logs(),
         layout.php().join("logs"),
         layout.mysql(),
+        layout.mailpit(),
     ] {
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -37,6 +38,9 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
     )?;
     write_once(&layout.httpd_ssl_conf(), &templates::httpd_ssl_conf(layout))?;
     write_once(&layout.php_ini(), &templates::php_ini(layout))?;
+    if !cfg!(windows) {
+        ensure_php_mail(layout)?;
+    }
     write_once(&layout.my_cnf(), &templates::my_cnf(layout))?;
 
     if !layout.mime_types().exists() {
@@ -53,6 +57,42 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
     if htdocs_empty {
         write_once(&layout.htdocs().join("index.php"), templates::dashboard())?;
     }
+    Ok(())
+}
+
+/// Adds the mail section to a php.ini written before SLOPP had Mailpit, so
+/// `mail()` goes there too. Only while php.ini doesn't mention
+/// `sendmail_path` at all: commenting the line out keeps it out. Returns
+/// whether it added it.
+pub fn ensure_php_mail(layout: &Layout) -> anyhow::Result<bool> {
+    let path = layout.php_ini();
+    let ini =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    if ini.contains("sendmail_path") {
+        return Ok(false);
+    }
+    let mut ini = ini.trim_end().to_string();
+    ini.push('\n');
+    ini.push_str(&templates::php_mail_ini(layout));
+    std::fs::write(&path, ini).with_context(|| format!("writing {}", path.display()))?;
+    Ok(true)
+}
+
+/// Writes [`Layout::sendmail`], which hands PHP's mail to the Mailpit at
+/// `mailpit` (or refuses it while there is none). Rewritten on every start
+/// of Apache and Mailpit, so it follows the SMTP port and Mailpit's path.
+#[cfg(unix)]
+pub fn write_sendmail(
+    layout: &Layout,
+    mailpit: Option<&Path>,
+    smtp_port: u16,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = layout.sendmail();
+    std::fs::write(&path, templates::sendmail_script(mailpit, smtp_port))
+        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("making {} executable", path.display()))?;
     Ok(())
 }
 
@@ -180,6 +220,26 @@ pub fn init_mysql(layout: &Layout, mariadb: &MariaDb) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_php_ini_gets_the_mail_section_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path());
+        std::fs::create_dir_all(layout.php()).unwrap();
+        std::fs::write(layout.php_ini(), "[PHP]\nengine = On\n\n").unwrap();
+        assert!(ensure_php_mail(&layout).unwrap());
+        let ini = std::fs::read_to_string(layout.php_ini()).unwrap();
+        assert!(
+            ini.starts_with("[PHP]\nengine = On\n\n[mail function]\n"),
+            "{ini}"
+        );
+        assert!(!ensure_php_mail(&layout).unwrap());
+        assert_eq!(std::fs::read_to_string(layout.php_ini()).unwrap(), ini);
+
+        // Commented out, it stays out.
+        std::fs::write(layout.php_ini(), ";sendmail_path = x\n").unwrap();
+        assert!(!ensure_php_mail(&layout).unwrap());
+    }
 
     #[test]
     fn writes_config_once_and_keeps_edits() {

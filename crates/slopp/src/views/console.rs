@@ -31,7 +31,7 @@ pub fn render(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl Into
             .child(
                 div()
                     .flex_none()
-                    .w(px(52.))
+                    .w(px(62.))
                     .text_color(Palette::text_secondary())
                     .child(source),
             )

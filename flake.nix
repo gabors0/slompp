@@ -1,5 +1,5 @@
 {
-  description = "SLOPP: an XAMPP-style GPUI control panel for Apache, PHP, MariaDB and phpMyAdmin";
+  description = "SLOPP: an XAMPP-style GPUI control panel for Apache, PHP, MariaDB, Mailpit and phpMyAdmin";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -39,6 +39,7 @@
           apacheHttpd
           php
           mariadb
+          mailpit
         ];
 
         buildInputs =

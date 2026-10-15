@@ -1,5 +1,5 @@
 //! Finds the server programs: Apache httpd and its modules, PHP (as an Apache
-//! module or PHP-FPM) and MariaDB. Settings can point at any of them; the
+//! module or PHP-FPM), MariaDB and Mailpit. Settings can point at any of them; the
 //! rest are looked up on `PATH` and in the usual system locations.
 
 use std::path::{Path, PathBuf};
@@ -51,11 +51,18 @@ pub struct MariaDb {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Mailpit {
+    pub bin: PathBuf,
+    pub version: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Toolchain {
     pub httpd: Option<Httpd>,
     pub php: Option<Php>,
     pub mariadb: Option<MariaDb>,
+    pub mailpit: Option<Mailpit>,
 }
 
 impl Toolchain {
@@ -63,10 +70,12 @@ impl Toolchain {
         let httpd = detect_httpd(overrides);
         let php = detect_php(overrides, httpd.as_ref());
         let mariadb = detect_mariadb(overrides);
+        let mailpit = detect_mailpit(overrides);
         Toolchain {
             httpd,
             php,
             mariadb,
+            mailpit,
         }
     }
 }
@@ -244,6 +253,33 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
         basedir,
         version,
     })
+}
+
+impl Toolchain {
+    /// Takes the Mailpit at `bin` when none was found elsewhere: Linux's
+    /// Install downloads it into the stack.
+    pub fn with_mailpit_at(mut self, bin: &Path) -> Toolchain {
+        if self.mailpit.is_none() && is_executable(bin) {
+            self.mailpit = Some(mailpit_at(bin.to_path_buf()));
+        }
+        self
+    }
+}
+
+fn detect_mailpit(overrides: &Binaries) -> Option<Mailpit> {
+    let bin = overrides
+        .mailpit
+        .clone()
+        .or_else(|| find_program(&["mailpit"]))?;
+    Some(mailpit_at(bin))
+}
+
+fn mailpit_at(bin: PathBuf) -> Mailpit {
+    // Without the flag `version` asks GitHub for the latest release.
+    let version = run_capture(&bin, &["version", "--no-release-check"])
+        .as_deref()
+        .and_then(parse_mailpit_version);
+    Mailpit { bin, version }
 }
 
 /// Directories searched after `PATH`: system binaries that are often missing
@@ -559,6 +595,19 @@ fn parse_mariadb_version(text: &str) -> Option<String> {
     Some(word.split('-').next()?.to_string())
 }
 
+/// `mailpit 1.31.4 compiled with go1.26.8 on linux/amd64` → `1.31.4`, with
+/// or without a `v` before the number. Mailpit names itself by the path it
+/// was started with, which may hold spaces, so the version is the word
+/// before `compiled`.
+fn parse_mailpit_version(text: &str) -> Option<String> {
+    let (before, _) = text.lines().find_map(|l| l.split_once(" compiled with "))?;
+    let word = before.split_whitespace().last()?;
+    let version = word.strip_prefix('v').unwrap_or(word);
+    version
+        .starts_with(|c: char| c.is_ascii_digit())
+        .then(|| version.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,6 +766,24 @@ Server MPM:     event
             parse_mariadb_version("mysqld  Ver 8.0.36 for Linux on x86_64 (MySQL)").as_deref(),
             Some("8.0.36")
         );
+        assert_eq!(
+            parse_mailpit_version("mailpit 1.31.4 compiled with go1.26.8 on linux/amd64\n")
+                .as_deref(),
+            Some("1.31.4")
+        );
+        assert_eq!(
+            parse_mailpit_version("mailpit v1.31.5 compiled with go1.26.8 on windows/amd64")
+                .as_deref(),
+            Some("1.31.5")
+        );
+        assert_eq!(
+            parse_mailpit_version(
+                r"C:\Program Files\mailpit\mailpit.exe 1.31.5 compiled with go1.26.8 on windows/amd64"
+            )
+            .as_deref(),
+            Some("1.31.5")
+        );
+        assert_eq!(parse_mailpit_version("mailpit: unknown flag"), None);
     }
 
     #[cfg(unix)]

@@ -1,15 +1,16 @@
-//! Starts the real servers (Apache with PHP, MariaDB) in a stack root of
-//! their own, on free ports, and checks what `Stack` promises about them.
+//! Starts the real servers (Apache with PHP, MariaDB, Mailpit) in a stack
+//! root of their own, on free ports, and checks what `Stack` promises about
+//! them.
 //!
-//! They need Apache, PHP (PHP-FPM or mod_php, with mysqli) and MariaDB
-//! installed, and a regular user (mariadbd and php-fpm refuse to run as
+//! They need Apache, PHP (PHP-FPM or mod_php, with mysqli), MariaDB and
+//! Mailpit installed, and a regular user (mariadbd and php-fpm refuse to run as
 //! root), so they only run when asked:
 //!
 //! ```sh
 //! cargo test -p slopp-core --test servers -- --ignored
 //! ```
 
-use std::io::{Read as _, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -49,6 +50,7 @@ impl Fixture {
             ("Apache", tools.httpd.is_none()),
             ("PHP", tools.php.is_none()),
             ("MariaDB", tools.mariadb.is_none()),
+            ("Mailpit", tools.mailpit.is_none()),
         ]
         .into_iter()
         .filter_map(|(name, missing)| missing.then_some(name))
@@ -105,9 +107,9 @@ impl Drop for Fixture {
     }
 }
 
-/// Three ports nothing listens on right now.
+/// Ports nothing listens on right now.
 fn free_ports() -> Ports {
-    let listeners: Vec<TcpListener> = (0..3)
+    let listeners: Vec<TcpListener> = (0..5)
         .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
         .collect();
     let port = |i: usize| listeners[i].local_addr().unwrap().port();
@@ -115,7 +117,45 @@ fn free_ports() -> Ports {
         http: port(0),
         https: port(1),
         mysql: port(2),
+        smtp: port(3),
+        mailpit: port(4),
     }
+}
+
+/// Sends a message over SMTP, checking each reply's code.
+fn send_mail(port: u16, subject: &str) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
+    let mut replies = BufReader::new(stream.try_clone().unwrap());
+    // A reply's last line has a space after the code, the others a dash.
+    let mut expect = |code: &str| loop {
+        let mut line = String::new();
+        replies.read_line(&mut line).unwrap();
+        assert!(line.starts_with(code), "wanted {code}, got {line:?}");
+        if line.as_bytes().get(3) != Some(&b'-') {
+            break;
+        }
+    };
+    expect("220");
+    for (command, code) in [
+        ("EHLO localhost", "250"),
+        ("MAIL FROM:<app@example.com>", "250"),
+        ("RCPT TO:<someone@example.com>", "250"),
+        ("DATA", "354"),
+    ] {
+        write!(stream, "{command}\r\n").unwrap();
+        expect(code);
+    }
+    write!(
+        stream,
+        "From: app@example.com\r\nTo: someone@example.com\r\nSubject: {subject}\r\n\r\nHello.\r\n.\r\n"
+    )
+    .unwrap();
+    expect("250");
+    write!(stream, "QUIT\r\n").unwrap();
+    expect("221");
 }
 
 fn eventually_closed(port: u16) -> bool {
@@ -324,4 +364,51 @@ fn new_ports_need_no_config_changes() {
 
     fx.stop(Module::Apache);
     fx.stop(Module::MySql);
+}
+
+#[test]
+#[ignore = "starts Mailpit"]
+fn mailpit_catches_mail_and_keeps_it() {
+    let _serial = locked();
+    let fx = Fixture::new();
+    let stack = &fx.stack;
+    let ports = stack.settings().ports;
+    assert_eq!(stack.problems(Module::Mailpit), vec![]);
+    let describe = stack.describe(Module::Mailpit).unwrap();
+    assert!(describe.starts_with("Mailpit 1."), "{describe}");
+
+    fx.start(Module::Mailpit);
+    send_mail(ports.smtp, "Caught by SLOPP");
+    let (code, body) = get(ports.mailpit, "/api/v1/messages");
+    assert_eq!(code, 200, "{body}");
+    assert!(body.contains("Caught by SLOPP"), "{body}");
+    assert!(stack.layout().mailpit_db().exists());
+    fx.stop(Module::Mailpit);
+
+    // The mail is in the stack, not in Mailpit's memory.
+    fx.start(Module::Mailpit);
+    let (_, body) = get(ports.mailpit, "/api/v1/messages");
+    assert!(body.contains("Caught by SLOPP"), "{body}");
+    fx.stop(Module::Mailpit);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "starts Mailpit, Apache and PHP"]
+fn php_mail_goes_to_mailpit() {
+    let _serial = locked();
+    let fx = Fixture::new();
+    let ports = fx.stack.settings().ports;
+    fx.start(Module::Mailpit);
+    fx.start(Module::Apache);
+    fx.page(
+        "mail.php",
+        "<?php var_export(mail('someone@example.com', 'Sent by PHP', 'Hello.'));",
+    );
+    let (code, body) = get(ports.http, "/mail.php");
+    assert_eq!((code, body.as_str()), (200, "true"));
+    let (_, body) = get(ports.mailpit, "/api/v1/messages");
+    assert!(body.contains("Sent by PHP"), "{body}");
+    fx.stop(Module::Apache);
+    fx.stop(Module::Mailpit);
 }

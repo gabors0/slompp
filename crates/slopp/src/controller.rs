@@ -637,6 +637,21 @@ impl Controller {
         }
     }
 
+    /// Mailpit's page, which Mailpit serves itself.
+    pub fn open_mailpit(&mut self, cx: &mut Context<Self>) {
+        if !self.row(Module::Mailpit).running() {
+            self.log.push(
+                Some(Module::Mailpit),
+                Kind::Info,
+                "Start Mailpit first: it serves its own page.",
+            );
+            cx.notify();
+            return;
+        }
+        let result = desktop::open_url(&self.stack.mailpit_url());
+        self.report(result, cx);
+    }
+
     /// Opens a page Apache serves, or says to start Apache.
     fn open_served(&mut self, module: Module, url: String, cx: &mut Context<Self>) {
         if !self.row(Module::Apache).running() {
@@ -754,7 +769,7 @@ impl Controller {
         if packages.is_empty() {
             return;
         }
-        let installer = match Installer::find(&packages) {
+        let installer = match Installer::find(&packages, self.stack.layout()) {
             Ok(installer) => installer,
             Err(unavailable) => {
                 self.log
@@ -771,7 +786,11 @@ impl Controller {
         self.log.push(
             Some(module),
             Kind::Info,
-            format!("Installing {} with {name}…", install::names(&packages)),
+            format!(
+                "Installing {} {}…",
+                install::names(&packages),
+                installer.via()
+            ),
         );
         self.getting = Some((module, format!("Starting {name}…")));
 

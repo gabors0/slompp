@@ -71,6 +71,8 @@ impl Family {
                 (Family::Arch, Package::Apache) => &["apache"],
                 (Family::Arch, Package::Php) => &["php", "php-apache"],
                 (Family::Arch, Package::MariaDb) => &["mariadb"],
+                // Not packaged by the distributions; downloaded instead.
+                (_, Package::Mailpit) => &[],
             };
             for name in these {
                 if !names.contains(name) {
@@ -150,6 +152,7 @@ impl Installer {
                         Package::Apache => "nixpkgs#apacheHttpd",
                         Package::Php => "nixpkgs#php",
                         Package::MariaDb => "nixpkgs#mariadb",
+                        Package::Mailpit => "nixpkgs#mailpit",
                     })
                     .collect();
                 return Err(Unavailable {

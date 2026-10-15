@@ -109,6 +109,7 @@ fn handle(command: TrayCommand, cx: &mut App) {
         TrayCommand::StopAll => controller.update(cx, |c, cx| c.stop_all(cx)),
         TrayCommand::OpenSite => controller.update(cx, |c, cx| c.open_site(cx)),
         TrayCommand::OpenDbAdmin(tool) => controller.update(cx, |c, cx| c.open_db_admin(tool, cx)),
+        TrayCommand::OpenMailpit => controller.update(cx, |c, cx| c.open_mailpit(cx)),
         TrayCommand::ShowPanel => show_panel(cx),
         TrayCommand::Quit => cx.quit(),
     }

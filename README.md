@@ -11,15 +11,21 @@
 </table>
 
 The servers are the stock upstream programs, the
-same modules XAMPP ships:
+same modules XAMPP ships, with Mailpit for mail:
 
 | Module  | What runs                                        |
 | ------- | ------------------------------------------------ |
 | Apache  | Apache httpd, with PHP through PHP-FPM or mod_php |
 | MySQL   | MariaDB                                          |
+| Mailpit | [Mailpit](https://mailpit.axllent.org), which catches mail and shows it in a web page |
 | (admin) | phpMyAdmin and/or Adminer, downloaded on request |
 
-Tomcat, ProFTPD/FileZilla and Mercury are not included.
+Tomcat, ProFTPD/FileZilla and Mercury are not included. Mailpit listens on
+127.0.0.1 only (SMTP on 1025, its page on 8025) and keeps the mail in the
+stack folder; its Admin button opens the inbox. PHP's `mail()` goes there:
+on Linux and macOS php.ini's `sendmail_path` runs `run/sendmail`, which
+hands the message to Mailpit, and on Windows SLOPP sets PHP's `SMTP` and
+`smtp_port`.
 
 SLOPP manages the servers the way the XAMPP control panel does: start and
 stop each module, see its ports and PIDs, open its config and log files, open
@@ -32,7 +38,7 @@ On Linux SLOPP puts an icon in the system tray (StatusNotifierItem, shown by
 KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
 in the menu bar, on Windows in the notification area (Windows 11 first puts
 new icons behind the ^ arrow; drag it onto the taskbar to keep it in view).
-Its top lamp is Apache, the middle one MySQL. The menu starts and stops
+Its lamps are Apache, MySQL and Mailpit, top to bottom. The menu starts and stops
 modules and opens the site, phpMyAdmin or Adminer; on Linux and Windows a
 left click shows the panel (the menu is on the right button on Windows).
 
@@ -55,8 +61,9 @@ On Linux and macOS, one script installs the servers and SLOPP:
 curl -fsSL https://slopp.gs0.me/install.sh | sh
 ```
 
-It uses `apt`, `dnf`, `pacman` or `zypper` (or Homebrew), then installs the
-AppImage or `SLOPP.app`. `sh -s -- --no-deps` installs SLOPP only,
+It uses `apt`, `dnf`, `pacman` or `zypper` (or Homebrew, which gets Mailpit
+too), then installs the AppImage or `SLOPP.app`; on Linux the AppImage then
+downloads Mailpit from GitHub. `sh -s -- --no-deps` installs SLOPP only,
 `--version X.Y.Z` a specific release. The steps below are the manual
 alternative.
 
@@ -93,7 +100,7 @@ alternative.
 On NixOS / with Nix:
 
 ```sh
-nix run                      # the panel, with Apache, PHP and MariaDB on PATH
+nix run                      # the panel, with Apache, PHP, MariaDB and Mailpit on PATH
 nix develop -c cargo run -p slopp
 ```
 
@@ -104,14 +111,17 @@ relatives) the Install button on a module whose servers are missing does
 that for you: it asks for your password with `pkexec` and runs apt, dnf or
 pacman. On Debian and Ubuntu it also stops and disables the system's
 `apache2` and `mariadb` services it installed, which would take the stack's
-ports. SLOPP looks for them on `PATH` and in the usual
-system locations; Settings → Programs takes explicit paths.
+ports. The distributions don't package Mailpit, so its Install button
+downloads the latest release from GitHub into the stack folder instead
+(checked against GitHub's SHA-256 digest; no password needed). SLOPP looks
+for them on `PATH` and in the usual system locations; Settings → Programs
+takes explicit paths.
 
 On macOS, with [Homebrew](https://brew.sh) and Xcode (GPUI compiles Metal
 shaders):
 
 ```sh
-brew install rust php mariadb     # mariadb@11.8 instead if you keep Homebrew's mysql
+brew install rust php mariadb mailpit   # mariadb@11.8 instead if you keep Homebrew's mysql
 cargo run -p slopp
 scripts/bundle-macos.sh           # or build target/release/SLOPP.app for /Applications
 ```
@@ -128,7 +138,8 @@ On Windows (new, so expect rough edges), the Install button on a module
 whose servers are missing gets them with [winget](https://aka.ms/getwinget),
 which comes with Windows 11 and current Windows 10 (App Installer in the
 Microsoft Store): Apache Lounge's Apache (`ApacheLounge.httpd`), PHP 8.5's
-Thread Safe build (`PHP.PHP.8.5`) and MariaDB (`MariaDB.Server`), with the
+Thread Safe build (`PHP.PHP.8.5`), MariaDB (`MariaDB.Server`) and Mailpit
+(`axllent.mailpit`), with the
 Visual C++ runtime they need. The runtime and MariaDB install for the whole
 machine, so Windows asks for permission; MariaDB's installer sets up no
 Windows service. `winget upgrade` updates them later (stop the module first).
@@ -173,6 +184,7 @@ php/php.ini                  PHP config, php/logs/php_error_log
 mysql/my.cnf                 MariaDB config, mysql/data/ the databases
 phpMyAdmin/                  after "Get phpMyAdmin" (MySQL's Admin menu)
 adminer/                     after "Get Adminer": adminer.php, index.php and adminer.css to edit
+mailpit/                     mailpit.db, the mail Mailpit caught, mailpit.log, and bin/ on Linux
 tmp/  run/                   sockets, sessions, pid files
 ```
 
@@ -181,7 +193,9 @@ machine-specific paths (Apache's module directory, PHP-FPM's socket) are
 passed on the command line at start, so changing ports in Settings doesn't
 touch your edits. The one exception: installing Adminer into a stack whose
 `httpd-slopp.conf` predates it appends the `/adminer` alias (restart Apache
-afterwards).
+afterwards), and on Linux and macOS a `php.ini` that doesn't mention
+`sendmail_path` at all gets the mail section that sends to Mailpit
+(comment the line out to keep it out).
 
 phpMyAdmin gets the dark BooDark theme (orange, like the panel) as its
 default; its home page still offers the stock themes. Adminer gets a design

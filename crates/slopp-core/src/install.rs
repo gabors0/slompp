@@ -9,13 +9,13 @@ use std::process::{Command, Stdio};
 
 use anyhow::Context as _;
 
-use crate::Module;
 #[cfg(target_os = "macos")]
 use crate::brew;
 #[cfg(target_os = "linux")]
 use crate::linux;
 #[cfg(windows)]
 use crate::winget;
+use crate::{Layout, Module};
 
 /// What a module needs installed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,16 +23,23 @@ pub enum Package {
     Apache,
     Php,
     MariaDb,
+    Mailpit,
 }
 
 impl Package {
-    pub const ALL: [Package; 3] = [Package::Apache, Package::Php, Package::MariaDb];
+    pub const ALL: [Package; 4] = [
+        Package::Apache,
+        Package::Php,
+        Package::MariaDb,
+        Package::Mailpit,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Package::Apache => "Apache",
             Package::Php => "PHP",
             Package::MariaDb => "MariaDB",
+            Package::Mailpit => "Mailpit",
         }
     }
 
@@ -41,6 +48,7 @@ impl Package {
         match self {
             Package::Apache | Package::Php => Module::Apache,
             Package::MariaDb => Module::MySql,
+            Package::Mailpit => Module::Mailpit,
         }
     }
 }
@@ -64,6 +72,18 @@ pub const VIA: &str = if cfg!(windows) {
     "with the system's package manager"
 };
 
+/// What installs `packages`: [`VIA`], except that on Linux Mailpit comes
+/// from GitHub.
+pub fn via(packages: &[Package]) -> &'static str {
+    if !cfg!(target_os = "linux") || !packages.contains(&Package::Mailpit) {
+        VIA
+    } else if packages.iter().all(|&p| p == Package::Mailpit) {
+        "from GitHub"
+    } else {
+        "with the system's package manager and from GitHub"
+    }
+}
+
 /// The package manager that installs the servers.
 #[derive(Debug, Clone)]
 pub enum Installer {
@@ -71,8 +91,13 @@ pub enum Installer {
     Winget(PathBuf),
     #[cfg(target_os = "macos")]
     Brew(PathBuf),
+    /// The distribution's package manager for the servers, and where
+    /// Mailpit's download goes, for what's wanted of each.
     #[cfg(target_os = "linux")]
-    Linux(linux::Installer),
+    Linux {
+        system: Option<linux::Installer>,
+        mailpit: Option<PathBuf>,
+    },
 }
 
 /// Why nothing can install the servers here, and what to do instead.
@@ -86,8 +111,11 @@ pub struct Unavailable {
 
 impl Installer {
     /// This system's package manager, if SLOPP can drive it. `packages` go
-    /// into the advice when it can't.
-    pub fn find(packages: &[Package]) -> Result<Installer, Unavailable> {
+    /// into the advice when it can't. On Linux Mailpit is downloaded into
+    /// `layout`'s stack.
+    pub fn find(packages: &[Package], layout: &Layout) -> Result<Installer, Unavailable> {
+        #[cfg(not(target_os = "linux"))]
+        let _ = layout;
         #[cfg(windows)]
         {
             let _ = packages;
@@ -119,7 +147,20 @@ impl Installer {
         }
         #[cfg(target_os = "linux")]
         {
-            linux::Installer::find(packages).map(Installer::Linux)
+            let system: Vec<Package> = packages
+                .iter()
+                .copied()
+                .filter(|&p| p != Package::Mailpit)
+                .collect();
+            let system = if system.is_empty() {
+                None
+            } else {
+                Some(linux::Installer::find(&system)?)
+            };
+            let mailpit = packages
+                .contains(&Package::Mailpit)
+                .then(|| layout.mailpit_bin());
+            Ok(Installer::Linux { system, mailpit })
         }
         #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
@@ -132,7 +173,8 @@ impl Installer {
         }
     }
 
-    /// "winget", "Homebrew", "apt".
+    /// "winget", "Homebrew", "apt"; "the download" for Mailpit alone on
+    /// Linux.
     pub fn name(&self) -> &'static str {
         match self {
             #[cfg(windows)]
@@ -140,8 +182,27 @@ impl Installer {
             #[cfg(target_os = "macos")]
             Installer::Brew(_) => "Homebrew",
             #[cfg(target_os = "linux")]
-            Installer::Linux(linux) => linux.name(),
+            Installer::Linux { system, .. } => system
+                .as_ref()
+                .map_or("the download", linux::Installer::name),
         }
+    }
+
+    /// How it installs, for "Installing Apache {via}": "with apt", and on
+    /// Linux "from GitHub" for Mailpit.
+    pub fn via(&self) -> String {
+        #[cfg(target_os = "linux")]
+        if let Installer::Linux {
+            system,
+            mailpit: Some(_),
+        } = self
+        {
+            return match system {
+                Some(system) => format!("with {} and from GitHub", system.name()),
+                None => "from GitHub".into(),
+            };
+        }
+        format!("with {}", self.name())
     }
 
     /// Installs `packages`, passing each line the package manager prints to
@@ -176,9 +237,38 @@ impl Installer {
             Installer::Brew(brew) => brew::install(brew, packages, progress)
                 .with_context(|| format!("Installing {} failed", names(packages))),
             #[cfg(target_os = "linux")]
-            Installer::Linux(linux) => linux
-                .install(packages, progress)
-                .with_context(|| format!("Installing {} failed", names(packages))),
+            Installer::Linux { system, mailpit } => {
+                let mut progress = progress;
+                let mut errors = Vec::new();
+                let servers: Vec<Package> = packages
+                    .iter()
+                    .copied()
+                    .filter(|&p| p != Package::Mailpit)
+                    .collect();
+                if let Some(system) = system
+                    && !servers.is_empty()
+                {
+                    let result = system
+                        .install(&servers, &mut progress)
+                        .with_context(|| format!("Installing {} failed", names(&servers)));
+                    if let Err(err) = result {
+                        errors.push(format!("{err:#}"));
+                    }
+                }
+                if let Some(dest) = mailpit
+                    && packages.contains(&Package::Mailpit)
+                {
+                    match crate::mailpit::install(dest, &mut progress) {
+                        Ok(version) => progress(format!("Mailpit {version} is in the stack")),
+                        Err(err) => errors.push(format!("Installing Mailpit failed: {err:#}")),
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    anyhow::bail!("{}", errors.join("\n"))
+                }
+            }
         }
     }
 }
@@ -295,7 +385,7 @@ mod tests {
         assert_eq!(names(&[]), "");
         assert_eq!(names(&[Package::Php]), "PHP");
         assert_eq!(names(&[Package::Apache, Package::Php]), "Apache and PHP");
-        assert_eq!(names(&Package::ALL), "Apache, PHP and MariaDB");
+        assert_eq!(names(&Package::ALL), "Apache, PHP, MariaDB and Mailpit");
     }
 
     #[test]

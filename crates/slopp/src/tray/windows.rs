@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow};
-use slopp_core::Module;
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
@@ -296,12 +295,7 @@ fn update_icon(hwnd: HWND, action: u32) -> bool {
     let ink = icon::Ink::for_panel(super::light_panel(state.light_panel));
     // SAFETY: no preconditions.
     let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16);
-    let pixmap = icon::render(
-        size,
-        state.lamp(Module::Apache),
-        state.lamp(Module::MySql),
-        ink,
-    );
+    let pixmap = icon::render(size, state.lamps(), ink);
     let hicon = make_icon(&pixmap);
 
     let mut data = icon_data(hwnd);
