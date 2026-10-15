@@ -245,10 +245,13 @@ pub fn php_ini(layout: &Layout) -> String {
     php_ini_for(layout, cfg!(windows))
 }
 
-/// Extensions PHP for Windows ships but doesn't load by itself: what
-/// phpMyAdmin, Adminer and most frameworks need. Elsewhere packages enable
-/// theirs in PHP's own ini directory.
-const WINDOWS_EXTENSIONS: &[&str] = &[
+/// What phpMyAdmin, Adminer and most frameworks need, like XAMPP's PHP.
+/// PHP for Windows ships them without loading them, so php.ini lists them
+/// there. Elsewhere packages enable theirs in PHP's own ini directory, except
+/// where the distribution's php.ini does it (Arch), which SLOPP's replaces:
+/// [`toolchain::unloaded_extensions`](crate::toolchain::unloaded_extensions)
+/// finds those.
+pub(crate) const EXTENSIONS: &[&str] = &[
     "curl",
     "fileinfo",
     "gd",
@@ -266,7 +269,7 @@ fn php_ini_for(layout: &Layout, windows: bool) -> String {
     let tmp = conf_path(&layout.tmp());
     let socket = conf_path(&layout.mysql_socket());
     let (extensions, mysql) = if windows {
-        let lines: String = WINDOWS_EXTENSIONS
+        let lines: String = EXTENSIONS
             .iter()
             .map(|e| format!("extension={e}\n"))
             .collect();
@@ -344,6 +347,20 @@ pub fn php_scan_ini(extension_dir: &Path, mysql_port: u16) -> String {
          mysqli.default_host = \"127.0.0.1\"\n\
          mysqli.default_port = {mysql_port}\n",
         conf_path(extension_dir)
+    )
+}
+
+/// Linux and macOS: `slopp.ini` in [`Layout::php_scan_dir`], loading the
+/// extensions this PHP has but doesn't load by itself. Rewritten on every
+/// start.
+pub fn php_extensions_ini(extensions: &[&str]) -> String {
+    let lines: String = extensions
+        .iter()
+        .map(|e| format!("extension={e}\n"))
+        .collect();
+    format!(
+        "; Written by SLOPP on every start; edit php.ini instead.\n\
+         ; Extensions this PHP has that its own configuration doesn't load.\n{lines}"
     )
 }
 

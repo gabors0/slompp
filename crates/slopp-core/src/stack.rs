@@ -518,10 +518,13 @@ impl Stack {
                     "-C".into(),
                     format!("Define PHP_MODULE_PATH \"{}\"", conf_path(lib)),
                 ]);
-                if cfg!(windows)
-                    && let Some(dir) = lib.parent()
-                {
-                    env = self.windows_php_env(dir)?;
+                if cfg!(windows) {
+                    if let Some(dir) = lib.parent() {
+                        env = self.windows_php_env(dir)?;
+                    }
+                } else {
+                    let cli = crate::toolchain::find_program(&["php"]);
+                    env = self.unix_php_env(cli.as_deref())?;
                 }
             }
             PhpHandler::Fpm(fpm) => {
@@ -534,7 +537,8 @@ impl Stack {
                         conf_path(&layout.php_fpm_socket())
                     ),
                 ]);
-                procs.push(self.start_php_fpm(fpm)?);
+                let fpm_env = self.unix_php_env(Some(fpm))?;
+                procs.push(self.start_php_fpm(fpm, fpm_env)?);
             }
         }
 
@@ -591,7 +595,41 @@ impl Stack {
         ])
     }
 
-    fn start_php_fpm(&self, fpm: &Path) -> anyhow::Result<Tracked> {
+    /// What PHP needs from its environment on Linux and macOS: when `php`
+    /// (the CLI beside the Apache module, or PHP-FPM) has extensions that
+    /// SLOPP's php.ini wants but doesn't load them by itself (Arch enables
+    /// mysqli in its own php.ini, which SLOPP's replaces), a `slopp.ini`
+    /// that loads them, in a `PHP_INI_SCAN_DIR` read after PHP's own (the
+    /// leading `:` keeps that). Nothing otherwise.
+    fn unix_php_env(
+        &self,
+        php: Option<&Path>,
+    ) -> anyhow::Result<Vec<(String, std::ffi::OsString)>> {
+        let layout = &self.layout;
+        let scan_dir = layout.php_scan_dir();
+        let ini = scan_dir.join("slopp.ini");
+        let unloaded = php
+            .map(|php| crate::toolchain::unloaded_extensions(php, &layout.php_ini()))
+            .unwrap_or_default();
+        if unloaded.is_empty() {
+            let _ = std::fs::remove_file(&ini);
+            return Ok(Vec::new());
+        }
+        tracing::info!("loading PHP extensions {unloaded:?} from {}", ini.display());
+        std::fs::create_dir_all(&scan_dir)
+            .with_context(|| format!("creating {}", scan_dir.display()))?;
+        std::fs::write(&ini, templates::php_extensions_ini(&unloaded))
+            .with_context(|| format!("writing {}", ini.display()))?;
+        let mut value = std::ffi::OsString::from(":");
+        value.push(scan_dir.as_os_str());
+        Ok(vec![("PHP_INI_SCAN_DIR".into(), value)])
+    }
+
+    fn start_php_fpm(
+        &self,
+        fpm: &Path,
+        env: Vec<(String, std::ffi::OsString)>,
+    ) -> anyhow::Result<Tracked> {
         let layout = &self.layout;
         std::fs::write(layout.php_fpm_conf(), templates::php_fpm_conf(layout))
             .with_context(|| format!("writing {}", layout.php_fpm_conf().display()))?;
@@ -603,7 +641,8 @@ impl Stack {
             .arg("--fpm-config")
             .arg(layout.php_fpm_conf())
             .arg("-c")
-            .arg(layout.php_ini());
+            .arg(layout.php_ini())
+            .envs(env);
         let child = process::spawn_detached(cmd, &layout.php_fpm_log())?;
         let tracked = self.keep(child);
 

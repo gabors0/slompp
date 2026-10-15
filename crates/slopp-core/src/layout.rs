@@ -123,8 +123,9 @@ impl Layout {
         self.php().join("logs/php-fpm.log")
     }
 
-    /// Windows: PHP's `PHP_INI_SCAN_DIR`, holding the generated
-    /// `slopp.ini` that says where PHP's extensions are.
+    /// The `PHP_INI_SCAN_DIR` SLOPP adds, holding the generated `slopp.ini`:
+    /// on Windows where PHP's extensions are, elsewhere the extensions PHP
+    /// has but doesn't load by itself.
     pub fn php_scan_dir(&self) -> PathBuf {
         self.run().join("php")
     }
