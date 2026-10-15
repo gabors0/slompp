@@ -1,4 +1,6 @@
-# Only the website is deployed.
+# Only the website is deployed. Git builds keep .git for vercel.json's
+# ignoreCommand (the CLI never uploads it).
 /*
 !/site
 !/vercel.json
+!/.git
