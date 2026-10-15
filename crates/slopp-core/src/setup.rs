@@ -20,6 +20,7 @@ pub fn ensure_layout(layout: &Layout, httpd: Option<&Httpd>) -> anyhow::Result<(
         layout.apache_logs(),
         layout.php().join("logs"),
         layout.mysql(),
+        layout.mailpit(),
     ] {
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }

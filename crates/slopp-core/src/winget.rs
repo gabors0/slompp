@@ -1,11 +1,11 @@
 //! Installing the servers on Windows with winget, its package manager, from
 //! the community repository's packages: Apache Lounge's httpd, PHP's Thread
-//! Safe build (the one with the Apache module) and MariaDB's MSI. winget
-//! picks the versions and pulls in the Visual C++ runtime they need.
+//! Safe build (the one with the Apache module), MariaDB's MSI and Mailpit.
+//! winget picks the versions and pulls in the Visual C++ runtime they need.
 //!
-//! Apache and PHP are portable packages unpacked under winget's `Packages`
-//! folder, which winget adds to the user's `PATH`; a panel started earlier
-//! doesn't see that, so [`program_dirs`] lists their folders for
+//! Apache, PHP and Mailpit are portable packages unpacked under winget's
+//! `Packages` folder, which winget adds to the user's `PATH` (Mailpit as a
+//! link in `WinGet\Links`); a panel started earlier doesn't see that, so [`program_dirs`] lists their folders for
 //! [`Toolchain::detect`](crate::Toolchain::detect). MariaDB's MSI goes to
 //! `Program Files\MariaDB <version>`, already searched. Run without its
 //! dialogs, the MSI registers no Windows service (its only default for
@@ -43,6 +43,7 @@ pub fn id(package: Package) -> String {
         Package::Apache => "ApacheLounge.httpd".into(),
         Package::Php => format!("PHP.PHP.{PHP_SERIES}"),
         Package::MariaDb => "MariaDB.Server".into(),
+        Package::Mailpit => "axllent.mailpit".into(),
     }
 }
 
@@ -51,6 +52,7 @@ fn publisher(package: Package) -> &'static str {
         Package::Apache => "Apache Lounge",
         Package::Php => "php.net",
         Package::MariaDb => "mariadb.org",
+        Package::Mailpit => "Mailpit's GitHub releases",
     }
 }
 
@@ -60,6 +62,10 @@ fn by_hand(package: Package) -> &'static str {
         Package::Apache => "get Apache from apachelounge.com and unpack it to C:\\Apache24",
         Package::Php => "get PHP's Thread Safe zip from windows.php.net and unpack it to C:\\php",
         Package::MariaDb => "get MariaDB's installer from mariadb.org",
+        Package::Mailpit => {
+            "get mailpit-windows-amd64.zip from github.com/axllent/mailpit/releases \
+             and set the path of mailpit.exe in Settings"
+        }
     }
 }
 
@@ -134,7 +140,7 @@ pub fn install(
 
 /// Folders holding the programs of the portable packages winget installed,
 /// for the user and for the machine: Apache Lounge's `Apache24\bin`, then
-/// PHP's folders, newest series first.
+/// PHP's folders, newest series first, then Mailpit's.
 pub fn program_dirs() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
@@ -157,6 +163,7 @@ fn program_dirs_in(packages: &Path) -> Vec<PathBuf> {
     };
     let mut apache = Vec::new();
     let mut php: Vec<(Vec<u32>, PathBuf)> = Vec::new();
+    let mut mailpit = Vec::new();
     for entry in entries.flatten() {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -166,6 +173,8 @@ fn program_dirs_in(packages: &Path) -> Vec<PathBuf> {
         };
         if id.eq_ignore_ascii_case("ApacheLounge.httpd") {
             apache.push(entry.path().join(r"Apache24\bin"));
+        } else if id.eq_ignore_ascii_case("axllent.mailpit") {
+            mailpit.push(entry.path());
         } else if let Some(series) = strip_prefix_ignore_case(id, "PHP.PHP.")
             // The non-thread-safe builds have no Apache module.
             && let Some(version) = series
@@ -180,6 +189,7 @@ fn program_dirs_in(packages: &Path) -> Vec<PathBuf> {
     apache
         .into_iter()
         .chain(php.into_iter().map(|(_, dir)| dir))
+        .chain(mailpit)
         .collect()
 }
 
@@ -210,6 +220,7 @@ mod tests {
             "PHP.PHP.8.4_Microsoft.Winget.Source_8wekyb3d8bbwe",
             "PHP.PHP.8.5_Microsoft.Winget.Source_8wekyb3d8bbwe",
             "PHP.PHP.NTS.8.5_Microsoft.Winget.Source_8wekyb3d8bbwe",
+            "axllent.mailpit_Microsoft.Winget.Source_8wekyb3d8bbwe",
             "Git.Git_Microsoft.Winget.Source_8wekyb3d8bbwe",
         ] {
             std::fs::create_dir_all(dir.path().join(name)).unwrap();
@@ -223,6 +234,7 @@ mod tests {
                     .join(r"Apache24\bin"),
                 dir.path().join(format!("PHP.PHP.8.5{source}")),
                 dir.path().join(format!("PHP.PHP.8.4{source}")),
+                dir.path().join(format!("axllent.mailpit{source}")),
             ]
         );
         assert!(program_dirs_in(&dir.path().join("missing")).is_empty());

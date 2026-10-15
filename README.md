@@ -11,15 +11,18 @@
 </table>
 
 The servers are the stock upstream programs, the
-same modules XAMPP ships:
+same modules XAMPP ships, with Mailpit for mail:
 
 | Module  | What runs                                        |
 | ------- | ------------------------------------------------ |
 | Apache  | Apache httpd, with PHP through PHP-FPM or mod_php |
 | MySQL   | MariaDB                                          |
+| Mailpit | [Mailpit](https://mailpit.axllent.org), which catches mail and shows it in a web page |
 | (admin) | phpMyAdmin and/or Adminer, downloaded on request |
 
-Tomcat, ProFTPD/FileZilla and Mercury are not included.
+Tomcat, ProFTPD/FileZilla and Mercury are not included. Mailpit listens on
+127.0.0.1 only (SMTP on 1025, its page on 8025) and keeps the mail in the
+stack folder; its Admin button opens the inbox.
 
 SLOPP manages the servers the way the XAMPP control panel does: start and
 stop each module, see its ports and PIDs, open its config and log files, open
@@ -32,7 +35,7 @@ On Linux SLOPP puts an icon in the system tray (StatusNotifierItem, shown by
 KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
 in the menu bar, on Windows in the notification area (Windows 11 first puts
 new icons behind the ^ arrow; drag it onto the taskbar to keep it in view).
-Its top lamp is Apache, the middle one MySQL. The menu starts and stops
+Its lamps are Apache, MySQL and Mailpit, top to bottom. The menu starts and stops
 modules and opens the site, phpMyAdmin or Adminer; on Linux and Windows a
 left click shows the panel (the menu is on the right button on Windows).
 
@@ -93,7 +96,7 @@ alternative.
 On NixOS / with Nix:
 
 ```sh
-nix run                      # the panel, with Apache, PHP and MariaDB on PATH
+nix run                      # the panel, with Apache, PHP, MariaDB and Mailpit on PATH
 nix develop -c cargo run -p slopp
 ```
 
@@ -111,7 +114,7 @@ On macOS, with [Homebrew](https://brew.sh) and Xcode (GPUI compiles Metal
 shaders):
 
 ```sh
-brew install rust php mariadb     # mariadb@11.8 instead if you keep Homebrew's mysql
+brew install rust php mariadb mailpit   # mariadb@11.8 instead if you keep Homebrew's mysql
 cargo run -p slopp
 scripts/bundle-macos.sh           # or build target/release/SLOPP.app for /Applications
 ```
@@ -128,7 +131,8 @@ On Windows (new, so expect rough edges), the Install button on a module
 whose servers are missing gets them with [winget](https://aka.ms/getwinget),
 which comes with Windows 11 and current Windows 10 (App Installer in the
 Microsoft Store): Apache Lounge's Apache (`ApacheLounge.httpd`), PHP 8.5's
-Thread Safe build (`PHP.PHP.8.5`) and MariaDB (`MariaDB.Server`), with the
+Thread Safe build (`PHP.PHP.8.5`), MariaDB (`MariaDB.Server`) and Mailpit
+(`axllent.mailpit`), with the
 Visual C++ runtime they need. The runtime and MariaDB install for the whole
 machine, so Windows asks for permission; MariaDB's installer sets up no
 Windows service. `winget upgrade` updates them later (stop the module first).
@@ -173,6 +177,7 @@ php/php.ini                  PHP config, php/logs/php_error_log
 mysql/my.cnf                 MariaDB config, mysql/data/ the databases
 phpMyAdmin/                  after "Get phpMyAdmin" (MySQL's Admin menu)
 adminer/                     after "Get Adminer": adminer.php, index.php and adminer.css to edit
+mailpit/                     mailpit.db, the mail Mailpit caught, and mailpit.log
 tmp/  run/                   sockets, sessions, pid files
 ```
 

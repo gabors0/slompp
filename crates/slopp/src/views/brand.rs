@@ -14,8 +14,8 @@ use crate::theme::{Lamp, Palette};
 
 /// SLOPP's mark, as in the tray: three rack units joined into an S by a
 /// link on the left (top to middle) and one on the right (middle to bottom).
-/// The top unit's lamp is Apache's, the middle one's MySQL's.
-pub fn mark(apache: Lamp, mysql: Lamp) -> Div {
+/// The units' lamps are Apache's, MySQL's and Mailpit's, top to bottom.
+pub fn mark(lamps: [Lamp; 3]) -> Div {
     const WIDTH: f32 = 18.;
     const UNIT: f32 = 5.;
     const GAP: f32 = 2.;
@@ -67,9 +67,7 @@ pub fn mark(apache: Lamp, mysql: Lamp) -> Div {
         .gap(px(GAP))
         .child(link(false, 0.))
         .child(link(true, 1.))
-        .child(unit(apache))
-        .child(unit(mysql))
-        .child(unit(Lamp::Off))
+        .children(lamps.map(unit))
 }
 
 /// Keeps presses on controls inside the title bar to themselves: the bar
@@ -110,7 +108,6 @@ fn title() -> Div {
 }
 
 pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
-    let lamp = |module| ctl.row(module).lamp();
     let tab = |id: &'static str, label: &'static str, page: Page, cx: &Context<Panel>| {
         let active = panel.page == page;
         div()
@@ -139,7 +136,7 @@ pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl 
         .child(
             h_flex()
                 .gap_2()
-                .child(mark(lamp(Module::Apache), lamp(Module::MySql)))
+                .child(mark(Module::ALL.map(|m| ctl.row(m).lamp())))
                 .child(title()),
         )
         .child(

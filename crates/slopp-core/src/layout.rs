@@ -1,6 +1,7 @@
 //! Where everything lives inside a stack root. Mirrors XAMPP's own layout so
 //! people find their way around: `htdocs/`, `apache/conf/httpd.conf`,
-//! `php/php.ini`, `mysql/data/`, `phpMyAdmin/`, and `adminer/` beside it.
+//! `php/php.ini`, `mysql/data/`, `phpMyAdmin/`, and `adminer/` and
+//! `mailpit/` beside them.
 
 use std::path::{Path, PathBuf};
 
@@ -187,6 +188,22 @@ impl Layout {
         {
             std::env::temp_dir().join(format!("slopp-{hash:08x}"))
         }
+    }
+
+    // Mailpit
+
+    pub fn mailpit(&self) -> PathBuf {
+        self.root.join("mailpit")
+    }
+
+    /// The mail Mailpit caught, kept across restarts.
+    pub fn mailpit_db(&self) -> PathBuf {
+        self.mailpit().join("mailpit.db")
+    }
+
+    /// Mailpit's log: what it prints.
+    pub fn mailpit_log(&self) -> PathBuf {
+        self.mailpit().join("mailpit.log")
     }
 
     // phpMyAdmin

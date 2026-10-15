@@ -1,6 +1,6 @@
 //! Installing the servers on macOS with Homebrew, when it's there: `httpd`,
 //! `php` (which brings `libphp.so`, so Homebrew's Apache runs PHP as a
-//! module) and `mariadb`. Homebrew runs as the user, needs no password and
+//! module), `mariadb` and `mailpit`. Homebrew runs as the user, needs no password and
 //! starts no services, so nothing else takes the stack's ports. SLOPP
 //! doesn't install Homebrew itself.
 //!
@@ -41,6 +41,7 @@ fn formulae(prefix: &Path, packages: &[Package]) -> Vec<&'static str> {
         .map(|package| match package {
             Package::Apache => "httpd",
             Package::Php => "php",
+            Package::Mailpit => "mailpit",
             Package::MariaDb => {
                 let conflicts = ["mysql", "percona-server"]
                     .iter()
@@ -94,7 +95,7 @@ mod tests {
         let prefix = tempfile::tempdir().unwrap();
         assert_eq!(
             formulae(prefix.path(), &Package::ALL),
-            ["httpd", "php", "mariadb"]
+            ["httpd", "php", "mariadb", "mailpit"]
         );
         std::fs::create_dir_all(prefix.path().join("opt/mysql")).unwrap();
         assert_eq!(

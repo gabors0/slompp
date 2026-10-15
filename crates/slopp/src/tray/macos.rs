@@ -15,7 +15,6 @@ use objc2_app_kit::{
     NSStatusBar, NSStatusItem,
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSSize, NSString};
-use slopp_core::Module;
 
 use super::{MenuEntry, MenuIcon, TrayCommand, TrayState, icon};
 use crate::theme::Lamp;
@@ -159,14 +158,14 @@ pub fn spawn(
 /// image, which AppKit draws black or white to suit the menu bar; lit lamps
 /// have colour, so then it gets the ink for the system's appearance.
 fn image(state: &TrayState) -> Option<Retained<NSImage>> {
-    let (apache, mysql) = (state.lamp(Module::Apache), state.lamp(Module::MySql));
-    let template = apache == Lamp::Off && mysql == Lamp::Off;
+    let lamps = state.lamps();
+    let template = lamps.iter().all(|&lamp| lamp == Lamp::Off);
     let ink = if template {
         icon::Ink::Template
     } else {
         icon::Ink::for_panel(state.light_panel)
     };
-    let image = bitmap(&icon::render(ICON_PIXELS, apache, mysql, ink), ICON_POINTS)?;
+    let image = bitmap(&icon::render(ICON_PIXELS, lamps, ink), ICON_POINTS)?;
     image.setTemplate(template);
     Some(image)
 }
@@ -183,6 +182,7 @@ fn menu_image(icon: MenuIcon, light_menu: bool) -> Option<Retained<NSImage>> {
         MenuIcon::Stop => "stop.fill",
         MenuIcon::Site => "globe",
         MenuIcon::Database => "cylinder.split.1x2",
+        MenuIcon::Mail => "envelope",
         MenuIcon::Panel => "macwindow",
         MenuIcon::Quit => "power",
     };

@@ -9,16 +9,19 @@ pub enum Module {
     /// MariaDB (XAMPP calls it MySQL).
     #[serde(rename = "mysql")]
     MySql,
+    /// Mailpit, which catches the mail PHP sends and shows it in a web page.
+    Mailpit,
 }
 
 impl Module {
-    pub const ALL: [Module; 2] = [Module::Apache, Module::MySql];
+    pub const ALL: [Module; 3] = [Module::Apache, Module::MySql, Module::Mailpit];
 
     /// The name XAMPP shows.
     pub fn name(self) -> &'static str {
         match self {
             Module::Apache => "Apache",
             Module::MySql => "MySQL",
+            Module::Mailpit => "Mailpit",
         }
     }
 
@@ -27,6 +30,7 @@ impl Module {
         match self {
             Module::Apache => "apache",
             Module::MySql => "mysql",
+            Module::Mailpit => "mailpit",
         }
     }
 

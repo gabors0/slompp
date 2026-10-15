@@ -136,6 +136,7 @@ impl Stack {
                 list
             }
             Module::MySql => vec![(ports.mysql, "MySQL")],
+            Module::Mailpit => vec![(ports.smtp, "SMTP"), (ports.mailpit, "Web")],
         }
     }
 
@@ -166,6 +167,13 @@ impl Stack {
                 Some(match &db.version {
                     Some(v) => format!("MariaDB {v}"),
                     None => "MariaDB".to_string(),
+                })
+            }
+            Module::Mailpit => {
+                let mailpit = self.tools.mailpit.as_ref()?;
+                Some(match &mailpit.version {
+                    Some(v) => format!("Mailpit {v}"),
+                    None => "Mailpit".to_string(),
                 })
             }
         }
@@ -229,6 +237,22 @@ impl Stack {
                     });
                 }
             }
+            Module::Mailpit => {
+                if self.tools.mailpit.is_none() {
+                    problems.push(Problem::Missing {
+                        what: "Mailpit",
+                        hint: format!(
+                            "Install gets it {}, or set the path of {} in Settings.",
+                            install::VIA,
+                            if cfg!(windows) {
+                                "mailpit.exe"
+                            } else {
+                                "mailpit"
+                            }
+                        ),
+                    });
+                }
+            }
         }
         if self.tracked_alive(module).is_empty() {
             for (port, _) in self.ports(module) {
@@ -253,6 +277,7 @@ impl Stack {
                 Package::Apache => self.tools.httpd.is_none(),
                 Package::Php => self.tools.php.is_none(),
                 Package::MariaDb => self.tools.mariadb.is_none(),
+                Package::Mailpit => self.tools.mailpit.is_none(),
             })
             .collect()
     }
@@ -302,6 +327,7 @@ impl Stack {
         let procs = match module {
             Module::Apache => self.start_apache()?,
             Module::MySql => self.start_mysql()?,
+            Module::Mailpit => self.start_mailpit()?,
         };
         process::write_pid_file(&self.layout.pid_file(module), &procs)?;
         Ok(procs.iter().map(|p| p.pid).collect())
@@ -312,7 +338,7 @@ impl Stack {
     pub fn stop(&self, module: Module) -> anyhow::Result<bool> {
         let procs = process::read_pid_file(&self.layout.pid_file(module));
         let grace = match module {
-            Module::Apache => Duration::from_secs(10),
+            Module::Apache | Module::Mailpit => Duration::from_secs(10),
             // InnoDB flushes on shutdown; give it time.
             Module::MySql => Duration::from_secs(30),
         };
@@ -363,6 +389,7 @@ impl Stack {
                 self.layout.mysql_console_log(),
                 self.layout.mysql_error_log(),
             ],
+            Module::Mailpit => vec![self.layout.mailpit_log()],
         };
         logs.iter()
             .filter_map(|p| {
@@ -383,6 +410,12 @@ impl Stack {
         }
     }
 
+    /// Mailpit's page, where the mail PHP sent shows up. Mailpit serves it
+    /// itself, on the address it listens on.
+    pub fn mailpit_url(&self) -> String {
+        format!("http://127.0.0.1:{}/", self.settings.ports.mailpit)
+    }
+
     /// An admin tool's page, once it is installed.
     pub fn db_admin_url(&self, tool: DbAdmin) -> Option<String> {
         tool.installed(&self.layout)
@@ -399,6 +432,8 @@ impl Stack {
                 named("PHP (php.ini)", l.php_ini()),
             ],
             Module::MySql => vec![named("MySQL (my.cnf)", l.my_cnf())],
+            // Configured by its command line, which SLOPP writes.
+            Module::Mailpit => return Vec::new(),
         };
         files.push(named("phpMyAdmin (config.inc.php)", l.phpmyadmin_config()));
         files.push(named("Adminer (index.php)", l.adminer_index()));
@@ -419,6 +454,7 @@ impl Stack {
                 named("MySQL (mysql_error.log)", l.mysql_error_log()),
                 named("MySQL (install.log)", l.mysql_install_log()),
             ],
+            Module::Mailpit => vec![named("Mailpit (mailpit.log)", l.mailpit_log())],
         }
     }
 
@@ -442,6 +478,9 @@ impl Stack {
         }
         if let Some(PhpHandler::Fpm(fpm)) = self.tools.php.as_ref().map(|p| &p.handler) {
             add(Some(fpm));
+        }
+        if let Some(mailpit) = &self.tools.mailpit {
+            add(Some(&mailpit.bin));
         }
         let path = std::env::var_os("PATH").unwrap_or_default();
         let joined = std::env::join_paths(dirs.into_iter().chain(std::env::split_paths(&path)))
@@ -690,6 +729,37 @@ impl Stack {
         let child = process::spawn_detached(cmd, &layout.mysql_console_log())?;
         Ok(vec![self.keep(child)])
     }
+
+    /// Mailpit on localhost only, like MariaDB, keeping the mail in the
+    /// stack. Its version check is off: it would ask GitHub on every start.
+    fn start_mailpit(&self) -> anyhow::Result<Vec<Tracked>> {
+        let mailpit = self
+            .tools
+            .mailpit
+            .as_ref()
+            .context("Mailpit is not installed")?;
+        let layout = &self.layout;
+        let ports = self.settings.ports;
+        let mut cmd = Command::new(&mailpit.bin);
+        cmd.args(mailpit_args(layout, ports));
+        let child = process::spawn_detached(cmd, &layout.mailpit_log())?;
+        Ok(vec![self.keep(child)])
+    }
+}
+
+fn mailpit_args(layout: &Layout, ports: crate::Ports) -> Vec<std::ffi::OsString> {
+    let mut database = std::ffi::OsString::from("--database=");
+    database.push(layout.mailpit_db());
+    vec![
+        database,
+        format!("--listen=127.0.0.1:{}", ports.mailpit).into(),
+        format!("--smtp=127.0.0.1:{}", ports.smtp).into(),
+        // Any login is fine: PHP libraries often send one, and over plain
+        // SMTP, as nothing leaves the machine.
+        "--smtp-auth-accept-any".into(),
+        "--smtp-auth-allow-insecure".into(),
+        "--disable-version-check".into(),
+    ]
 }
 
 /// The last `n` non-empty lines of a file.
@@ -711,4 +781,30 @@ pub fn start_all(stack: &Stack, modules: &[Module], timeout: Duration) -> anyhow
             .map_err(|err| anyhow!("{module}: {err:#}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mailpit_listens_on_localhost_and_keeps_mail_in_the_stack() {
+        let layout = Layout::new("/srv/slopp");
+        let ports = crate::Ports {
+            smtp: 2525,
+            mailpit: 8026,
+            ..crate::Ports::default()
+        };
+        let args: Vec<String> = mailpit_args(&layout, ports)
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
+        assert_eq!(
+            args[0],
+            format!("--database={}", layout.mailpit_db().display())
+        );
+        assert!(args.contains(&"--listen=127.0.0.1:8026".to_string()));
+        assert!(args.contains(&"--smtp=127.0.0.1:2525".to_string()));
+        assert!(args.contains(&"--disable-version-check".to_string()));
+    }
 }

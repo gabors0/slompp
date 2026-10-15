@@ -23,16 +23,23 @@ pub enum Package {
     Apache,
     Php,
     MariaDb,
+    Mailpit,
 }
 
 impl Package {
-    pub const ALL: [Package; 3] = [Package::Apache, Package::Php, Package::MariaDb];
+    pub const ALL: [Package; 4] = [
+        Package::Apache,
+        Package::Php,
+        Package::MariaDb,
+        Package::Mailpit,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Package::Apache => "Apache",
             Package::Php => "PHP",
             Package::MariaDb => "MariaDB",
+            Package::Mailpit => "Mailpit",
         }
     }
 
@@ -41,6 +48,7 @@ impl Package {
         match self {
             Package::Apache | Package::Php => Module::Apache,
             Package::MariaDb => Module::MySql,
+            Package::Mailpit => Module::Mailpit,
         }
     }
 }
@@ -295,7 +303,7 @@ mod tests {
         assert_eq!(names(&[]), "");
         assert_eq!(names(&[Package::Php]), "PHP");
         assert_eq!(names(&[Package::Apache, Package::Php]), "Apache and PHP");
-        assert_eq!(names(&Package::ALL), "Apache, PHP and MariaDB");
+        assert_eq!(names(&Package::ALL), "Apache, PHP, MariaDB and Mailpit");
     }
 
     #[test]

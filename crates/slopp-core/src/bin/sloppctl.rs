@@ -8,10 +8,10 @@ use slopp_core::install::{self, Installer};
 use slopp_core::{DbAdmin, Module, Settings, Stack, net};
 
 const USAGE: &str = "\
-Usage: sloppctl <command> [apache|mysql]
+Usage: sloppctl <command> [apache|mysql|mailpit]
 
 Commands:
-  start [module]       Start Apache and MySQL, or one of them
+  start [module]       Start Apache, MySQL and Mailpit, or one of them
   stop [module]        Stop them
   restart [module]     Stop, then start
   status               Show what's running
@@ -36,7 +36,7 @@ fn main() -> ExitCode {
         Some(id) => match Module::from_id(id) {
             Some(m) => vec![m],
             None => {
-                eprintln!("Unknown module '{id}'. Use apache or mysql.");
+                eprintln!("Unknown module '{id}'. Use apache, mysql or mailpit.");
                 return ExitCode::from(2);
             }
         },
@@ -203,6 +203,10 @@ fn paths(stack: &Stack) {
     println!(
         "mariadbd      {}",
         show(tools.mariadb.as_ref().map(|m| m.server.as_path()))
+    );
+    println!(
+        "mailpit       {}",
+        show(tools.mailpit.as_ref().map(|m| m.bin.as_path()))
     );
 }
 

@@ -61,6 +61,8 @@ pub struct SettingsView {
     http: Field,
     https: Field,
     mysql: Field,
+    smtp: Field,
+    mailpit_web: Field,
     root: Field,
     editor: Field,
     terminal: Field,
@@ -69,8 +71,10 @@ pub struct SettingsView {
     php_fpm: Field,
     php_module: Field,
     mariadbd: Field,
+    mailpit: Field,
     autostart_apache: bool,
     autostart_mysql: bool,
+    autostart_mailpit: bool,
     stop_on_exit: bool,
     close_to_tray: bool,
     appearance: Appearance,
@@ -107,6 +111,8 @@ impl SettingsView {
             http: Field::new(Some(ports.http.to_string()), "80", window, cx),
             https: Field::new(Some(ports.https.to_string()), "443", window, cx),
             mysql: Field::new(Some(ports.mysql.to_string()), "3306", window, cx),
+            smtp: Field::new(Some(ports.smtp.to_string()), "1025", window, cx),
+            mailpit_web: Field::new(Some(ports.mailpit.to_string()), "8025", window, cx),
             root: Field::new(
                 path_text(&s.root),
                 Layout::default_root().display().to_string(),
@@ -165,8 +171,15 @@ impl SettingsView {
                 window,
                 cx,
             ),
+            mailpit: Field::new(
+                path_text(&b.mailpit),
+                found(tools.mailpit.as_ref().map(|m| m.bin.as_path())),
+                window,
+                cx,
+            ),
             autostart_apache: s.autostart.contains(&Module::Apache),
             autostart_mysql: s.autostart.contains(&Module::MySql),
+            autostart_mailpit: s.autostart.contains(&Module::Mailpit),
             stop_on_exit: s.stop_on_exit,
             close_to_tray: s.close_to_tray,
             appearance: s.appearance,
@@ -192,8 +205,17 @@ impl SettingsView {
             http: port(&self.http, "HTTP")?,
             https: port(&self.https, "HTTPS")?,
             mysql: port(&self.mysql, "MySQL")?,
+            smtp: port(&self.smtp, "SMTP")?,
+            mailpit: port(&self.mailpit_web, "Mailpit")?,
         };
-        if ports.http == ports.https || ports.http == ports.mysql || ports.https == ports.mysql {
+        let all = [
+            ports.http,
+            ports.https,
+            ports.mysql,
+            ports.smtp,
+            ports.mailpit,
+        ];
+        if all.iter().enumerate().any(|(i, p)| all[..i].contains(p)) {
             return Err("Each port can only be used once.".into());
         }
         let mut autostart = Vec::new();
@@ -202,6 +224,9 @@ impl SettingsView {
         }
         if self.autostart_mysql {
             autostart.push(Module::MySql);
+        }
+        if self.autostart_mailpit {
+            autostart.push(Module::Mailpit);
         }
         let root = self.root.path(cx);
         if let Some(root) = &root
@@ -220,6 +245,7 @@ impl SettingsView {
                 mariadbd: self.mariadbd.path(cx),
                 mariadb_install_db: None,
                 mariadb_client: None,
+                mailpit: self.mailpit.path(cx),
             },
             editor: self.editor.optional(cx),
             terminal: self.terminal.optional(cx),
@@ -316,19 +342,14 @@ fn toggle(
 
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let port = |label, field| div().w(px(100.)).child(labelled(label, field, true));
         let ports = h_flex()
             .gap_3()
-            .child(div().w(px(110.)).child(labelled("HTTP", &self.http, true)))
-            .child(
-                div()
-                    .w(px(110.))
-                    .child(labelled("HTTPS", &self.https, true)),
-            )
-            .child(
-                div()
-                    .w(px(110.))
-                    .child(labelled("MySQL", &self.mysql, true)),
-            );
+            .child(port("HTTP", &self.http))
+            .child(port("HTTPS", &self.https))
+            .child(port("MySQL", &self.mysql))
+            .child(port("SMTP", &self.smtp))
+            .child(port("Mailpit", &self.mailpit_web));
 
         let startup = v_flex()
             .gap_3()
@@ -345,6 +366,13 @@ impl Render for SettingsView {
                 self.autostart_mysql,
                 cx,
                 |this, v| this.autostart_mysql = v,
+            ))
+            .child(toggle(
+                "autostart-mailpit",
+                "Start Mailpit when SLOPP opens",
+                self.autostart_mailpit,
+                cx,
+                |this, v| this.autostart_mailpit = v,
             ))
             .child(toggle(
                 "close-to-tray",
@@ -418,7 +446,7 @@ impl Render for SettingsView {
                     .pt_2()
                     .child(section(
                         "Ports",
-                        "Where Apache and MySQL listen. Running servers pick up new ports when restarted.",
+                        "Where Apache, MySQL and Mailpit listen (SMTP for mail, Mailpit for its page). Running servers pick up new ports when restarted.",
                         ports,
                         true,
                     ))
@@ -446,7 +474,7 @@ impl Render for SettingsView {
                     ))
                     .child(section(
                         "Programs",
-                        "SLOPP looks for Apache, PHP and MariaDB on your PATH. Set a path here to use a different one.",
+                        "SLOPP looks for Apache, PHP, MariaDB and Mailpit on your PATH. Set a path here to use a different one.",
                         v_flex()
                             .gap_3()
                             .child(labelled("Apache (httpd)", &self.httpd, true))
@@ -461,7 +489,8 @@ impl Render for SettingsView {
                                 &self.php_module,
                                 true,
                             ))
-                            .child(labelled("MariaDB server (mariadbd)", &self.mariadbd, true)),
+                            .child(labelled("MariaDB server (mariadbd)", &self.mariadbd, true))
+                            .child(labelled("Mailpit", &self.mailpit, true)),
                         false,
                     ))
                     .child(footer),

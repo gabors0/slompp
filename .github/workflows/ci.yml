@@ -1,7 +1,7 @@
 # Checks every push and pull request: formatting, clippy and the unit tests
 # on Linux, macOS and Windows, then the server tests (crates/slopp-core/
-# tests/servers.rs), which start the real Apache, PHP and MariaDB, with each
-# way SLOPP runs PHP:
+# tests/servers.rs), which start the real Apache, PHP, MariaDB and Mailpit,
+# with each way SLOPP runs PHP:
 #
 #   ubuntu   apt's Apache with PHP-FPM, and with mod_php (prefork)
 #   macos    Homebrew's httpd with mod_php, and Apple's httpd with PHP-FPM
@@ -89,6 +89,9 @@ jobs:
           # SLOPP prefers mod_php whenever it is there.
           mod_php=$(installed 'libapache2-mod-php*')
           if [ "${{ matrix.php }}" = fpm ] && [ -n "$mod_php" ]; then sudo apt-get purge -y $mod_php; fi
+          # apt has no Mailpit: its own release.
+          curl -fsSL https://github.com/axllent/mailpit/releases/latest/download/mailpit-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin mailpit
       - name: Install the servers (Homebrew)
         if: runner.os == 'macOS'
         env:
@@ -98,7 +101,7 @@ jobs:
           # Without Homebrew's httpd, SLOPP uses Apple's, which refuses
           # unsigned modules, so PHP runs as PHP-FPM.
           if [ "${{ matrix.php }}" = mod_php ]; then brew install httpd; fi
-          brew install php mariadb
+          brew install php mariadb mailpit
       - name: Check which programs SLOPP finds
         shell: bash
         run: |

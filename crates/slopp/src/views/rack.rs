@@ -263,13 +263,24 @@ fn render_actions(
             .on_click(on_controller(cx, |c, cx| c.open_site(cx)))
             .into_any_element(),
         Module::MySql => db_admin_menu(ctl, running).into_any_element(),
+        Module::Mailpit => Button::new(SharedString::from(format!("admin-{id}")))
+            .small()
+            .ghost()
+            .label("Admin")
+            .tooltip("Open Mailpit's inbox in your browser")
+            .disabled(!running)
+            .on_click(on_controller(cx, |c, cx| c.open_mailpit(cx)))
+            .into_any_element(),
     };
 
+    // Disabled rather than left out when there's nothing (Mailpit has no
+    // config files), so the units' buttons stay in line.
     let files_menu = |kind: &'static str, files: Vec<slopp_core::stack::NamedFile>| {
         Button::new(SharedString::from(format!("{kind}-{id}")))
             .small()
             .ghost()
             .label(if kind == "config" { "Config" } else { "Logs" })
+            .disabled(files.is_empty())
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(gpui_kit::Anchor::TopRight, move |mut menu, _, _| {
                 for file in &files {
@@ -414,7 +425,7 @@ pub fn render_stack_bar(ctl: &Controller, cx: &Context<Panel>) -> impl IntoEleme
                 .xsmall()
                 .ghost()
                 .label("Shell")
-                .tooltip("Open a terminal with mariadb, php and httpd on PATH")
+                .tooltip("Open a terminal with mariadb, php, httpd and mailpit on PATH")
                 .on_click(on_controller(cx, |c, cx| c.open_shell(cx))),
         )
 }

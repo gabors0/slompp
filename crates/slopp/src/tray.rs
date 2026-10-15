@@ -31,6 +31,7 @@ pub enum TrayCommand {
     StopAll,
     OpenSite,
     OpenDbAdmin(DbAdmin),
+    OpenMailpit,
     ShowPanel,
     Quit,
 }
@@ -67,6 +68,11 @@ impl TrayState {
 
     fn lamp(&self, module: Module) -> Lamp {
         self.module(module).map_or(Lamp::Off, |m| m.lamp)
+    }
+
+    /// The lamps of the mark's units, top to bottom.
+    fn lamps(&self) -> [Lamp; 3] {
+        Module::ALL.map(|m| self.lamp(m))
     }
 
     /// One line per module, e.g. `Apache: Running on 8080, 8443`.
@@ -114,6 +120,7 @@ pub enum MenuIcon {
     Stop,
     Site,
     Database,
+    Mail,
     Panel,
     Quit,
 }
@@ -184,6 +191,12 @@ impl TrayState {
                 TrayCommand::OpenDbAdmin(tool),
             ));
         }
+        menu.push(item(
+            "Open Mailpit",
+            MenuIcon::Mail,
+            self.running(Module::Mailpit),
+            TrayCommand::OpenMailpit,
+        ));
         menu.push(MenuEntry::Separator);
         menu.push(item(
             "Show panel",
@@ -281,6 +294,7 @@ impl MenuIcon {
             MenuIcon::Stop => "media-playback-stop",
             MenuIcon::Site => "internet-web-browser",
             MenuIcon::Database => "server-database",
+            MenuIcon::Mail => "mail-unread",
             MenuIcon::Panel => "view-restore",
             MenuIcon::Quit => "application-exit",
         }
@@ -327,8 +341,7 @@ impl ksni::Tray for SloppTray {
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        let apache = self.state.lamp(Module::Apache);
-        let mysql = self.state.lamp(Module::MySql);
+        let lamps = self.state.lamps();
         let ink = icon::Ink::for_panel(self.state.light_panel);
         [16, 22, 24, 32, 48, 64]
             .into_iter()
@@ -337,7 +350,7 @@ impl ksni::Tray for SloppTray {
                     width,
                     height,
                     data,
-                } = icon::render(size, apache, mysql, ink);
+                } = icon::render(size, lamps, ink);
                 ksni::Icon {
                     width,
                     height,
@@ -410,7 +423,8 @@ pub fn spawn(
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 /// The tray icon, drawn in code: SLOPP's mark, three rack units joined into
 /// an S by a link on the left (top to middle) and one on the right (middle
-/// to bottom). The top unit's lamp is Apache's, the middle one's MySQL's.
+/// to bottom). The units' lamps are Apache's, MySQL's and Mailpit's, top to
+/// bottom.
 ///
 /// The units are solid white on dark panels and dark grey on light ones, like
 /// the panel's other icons, with grey links. A lit lamp is a gradient of its
@@ -556,7 +570,7 @@ pub mod icon {
         }
     }
 
-    fn shapes(apache: Lamp, mysql: Lamp, ink: Ink) -> Vec<Shape> {
+    fn shapes(lamps: [Lamp; 3], ink: Ink) -> Vec<Shape> {
         let (link, link_alpha) = ink.link();
         let link = |x0: f32, top: usize| Shape {
             x0,
@@ -573,7 +587,7 @@ pub mod icon {
         };
         // Behind the units.
         let mut shapes = vec![link(LEFT, 0), link(RIGHT - LINK_WIDTH, 1)];
-        for (y, lamp) in UNITS.into_iter().zip([Some(apache), Some(mysql), None]) {
+        for (y, lamp) in UNITS.into_iter().zip(lamps) {
             let unit = |x0, fill| Shape {
                 x0,
                 y0: y,
@@ -589,7 +603,7 @@ pub mod icon {
                     alpha: 1.0,
                 },
             ));
-            if let Some(color) = lamp.and_then(|lamp| ink.lamp(lamp)) {
+            if let Some(color) = ink.lamp(lamp) {
                 shapes.push(unit(
                     LAMP_CLEAR,
                     Fill::Fade {
@@ -603,9 +617,9 @@ pub mod icon {
         shapes
     }
 
-    /// The icon at `size`×`size`.
-    pub fn render(size: i32, apache: Lamp, mysql: Lamp, ink: Ink) -> Pixmap {
-        let shapes = shapes(apache, mysql, ink);
+    /// The icon at `size`×`size`, with the units' lamps top to bottom.
+    pub fn render(size: i32, lamps: [Lamp; 3], ink: Ink) -> Pixmap {
+        let shapes = shapes(lamps, ink);
         rasterize(size, |x, y| {
             // Each shape over the ones before it, premultiplied.
             let mut sample = [0.0f32; 4];
@@ -780,7 +794,7 @@ pub mod icon {
 
         #[test]
         fn lamps_fade_in_towards_the_right() {
-            let icon = render(32, Lamp::On, Lamp::Fault, Ink::White);
+            let icon = render(32, [Lamp::On, Lamp::Fault, Lamp::Off], Ink::White);
             assert_eq!(icon.data.len(), 32 * 32 * 4);
             // Solid white on the left of each unit, the lamp's colour
             // over most of it at the right.
@@ -796,14 +810,22 @@ pub mod icon {
             // Halfway it's a mix.
             let [_, r, _, _] = pixel(&icon, 18, 6);
             assert!((0x60..0xC0).contains(&r), "{r}");
-            // The bottom unit has no lamp, the corner is transparent.
+            // The bottom unit's lamp is off, the corner is transparent.
             assert_eq!(pixel(&icon, 28, 26), [255, 0xFF, 0xFF, 0xFF]);
             assert_eq!(pixel(&icon, 0, 0)[0], 0);
+
+            let icon = render(32, [Lamp::Off, Lamp::Off, Lamp::On], Ink::White);
+            assert_eq!(pixel(&icon, 28, 6), [255, 0xFF, 0xFF, 0xFF]);
+            let [_, r, g, b] = pixel(&icon, 28, 26);
+            assert!(
+                r < 0x30 && (0x98..0xA4).contains(&g) && b < 0x60,
+                "{r} {g} {b}"
+            );
         }
 
         #[test]
         fn links_join_the_units_into_an_s() {
-            let icon = render(32, Lamp::Off, Lamp::Off, Ink::White);
+            let icon = render(32, [Lamp::Off; 3], Ink::White);
             assert_eq!(pixel(&icon, 5, 11), [255, 0xB9, 0xB9, 0xB9]);
             assert_eq!(pixel(&icon, 26, 11)[0], 0);
             assert_eq!(pixel(&icon, 26, 21), [255, 0xB9, 0xB9, 0xB9]);
@@ -814,7 +836,7 @@ pub mod icon {
 
         #[test]
         fn grey_ink_holds_the_lamp_solid_further_in() {
-            let icon = render(32, Lamp::Off, Lamp::Busy, Ink::Grey);
+            let icon = render(32, [Lamp::Off, Lamp::Busy, Lamp::Off], Ink::Grey);
             assert_eq!(pixel(&icon, 28, 6), [255, 0x5C, 0x61, 0x66]);
             assert_eq!(pixel(&icon, 20, 16), [255, 0xEF, 0xAC, 0x01]);
             assert_eq!(pixel(&icon, 5, 11), [255, 0xA4, 0xA7, 0xAA]);
@@ -857,7 +879,7 @@ pub mod icon {
 
         #[test]
         fn template_links_are_translucent() {
-            let icon = render(32, Lamp::On, Lamp::Off, Ink::Template);
+            let icon = render(32, [Lamp::On, Lamp::Off, Lamp::Off], Ink::Template);
             assert_eq!(pixel(&icon, 5, 11), [140, 0, 0, 0]);
             assert_eq!(pixel(&icon, 28, 6), [255, 0, 0, 0]);
         }
@@ -899,13 +921,14 @@ mod tests {
             modules: vec![
                 module(Module::Apache, true, "Running", &[8080, 8443]),
                 module(Module::MySql, false, "Stopped", &[]),
+                module(Module::Mailpit, true, "Running", &[1025, 8025]),
             ],
             db_admins: Vec::new(),
             light_panel: false,
         };
         assert_eq!(
             state.summary(),
-            "Apache: Running on 8080, 8443\nMySQL: Stopped"
+            "Apache: Running on 8080, 8443\nMySQL: Stopped\nMailpit: Running on 1025, 8025"
         );
     }
 
@@ -951,6 +974,7 @@ mod tests {
             modules: vec![
                 module(Module::Apache, true, "Running", &[8080]),
                 module(Module::MySql, false, "Stopped", &[]),
+                module(Module::Mailpit, false, "Stopped", &[]),
             ],
             db_admins: vec![DbAdmin::Adminer],
             light_panel: false,
@@ -973,6 +997,12 @@ mod tests {
                     true,
                     TrayCommand::Toggle(Module::MySql)
                 ),
+                entry(
+                    "Start Mailpit",
+                    MenuIcon::Lamp(Lamp::Off),
+                    true,
+                    TrayCommand::Toggle(Module::Mailpit)
+                ),
                 MenuEntry::Separator,
                 entry("Open site", MenuIcon::Site, true, TrayCommand::OpenSite),
                 entry(
@@ -980,6 +1010,12 @@ mod tests {
                     MenuIcon::Database,
                     false,
                     TrayCommand::OpenDbAdmin(DbAdmin::Adminer)
+                ),
+                entry(
+                    "Open Mailpit",
+                    MenuIcon::Mail,
+                    false,
+                    TrayCommand::OpenMailpit
                 ),
                 MenuEntry::Separator,
                 entry("Show panel", MenuIcon::Panel, true, TrayCommand::ShowPanel),

@@ -15,6 +15,10 @@ pub struct Ports {
     pub http: u16,
     pub https: u16,
     pub mysql: u16,
+    /// Mailpit's SMTP server, where PHP's mail goes.
+    pub smtp: u16,
+    /// Mailpit's web page.
+    pub mailpit: u16,
 }
 
 impl Default for Ports {
@@ -25,6 +29,8 @@ impl Default for Ports {
             http: if low { 80 } else { 8080 },
             https: if low { 443 } else { 8443 },
             mysql: 3306,
+            smtp: 1025,
+            mailpit: 8025,
         }
     }
 }
@@ -72,6 +78,7 @@ pub struct Binaries {
     pub mariadbd: Option<PathBuf>,
     pub mariadb_install_db: Option<PathBuf>,
     pub mariadb_client: Option<PathBuf>,
+    pub mailpit: Option<PathBuf>,
 }
 
 /// The panel's colour scheme.
@@ -200,6 +207,7 @@ mod tests {
         let partial = Settings::load(&path).unwrap();
         assert_eq!(partial.ports.http, 81);
         assert_eq!(partial.ports.mysql, 3306);
+        assert_eq!(partial.ports.smtp, 1025);
         assert!(partial.close_to_tray, "missing fields take the defaults");
         assert_eq!(partial.appearance, Appearance::System);
 
