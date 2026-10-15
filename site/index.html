@@ -663,7 +663,7 @@ footer a { color: var(--text-2); }
                 <code id="cmd-linux">curl -fsSL https://slopp.gs0.me/install.sh | sh</code>
                 <button class="btn copy" type="button" data-copy="cmd-linux">Copy</button>
               </div>
-              <p class="muted">Installs Apache, PHP and MariaDB with apt, dnf, pacman or zypper, then the AppImage to <code>~/.local/bin</code>, which downloads Mailpit from GitHub, since the distributions don't package it. On NixOS, use <code>nix run github:gabors0/slopp</code> instead.</p>
+              <p class="muted">Installs the AppImage to <code>~/.local/bin</code>, then the missing servers: Apache, PHP and MariaDB with apt, dnf or pacman, and Mailpit from GitHub, since the distributions don't package it. On NixOS, use <code>nix run github:gabors0/slopp</code> instead.</p>
               <div class="files">
                 <a class="btn" data-asset="linux-x86_64.AppImage" href="https://github.com/gabors0/slopp/releases/latest">AppImage</a>
                 <a class="btn" data-asset="linux-x86_64.tar.gz" href="https://github.com/gabors0/slopp/releases/latest">Tarball</a>
@@ -675,14 +675,18 @@ footer a { color: var(--text-2); }
                 <code id="cmd-macos">curl -fsSL https://slopp.gs0.me/install.sh | sh</code>
                 <button class="btn copy" type="button" data-copy="cmd-macos">Copy</button>
               </div>
-              <p class="muted">Installs PHP, MariaDB and Mailpit with Homebrew, then puts <code>SLOPP.app</code> in Applications and clears the quarantine flag.</p>
+              <p class="muted">Puts <code>SLOPP.app</code> in Applications and clears the quarantine flag, then installs the missing servers with Homebrew.</p>
               <div class="files">
                 <a class="btn" data-asset="macos-arm64.dmg" href="https://github.com/gabors0/slopp/releases/latest">Disk image</a>
               </div>
             </div>
             <div class="tab-panel" data-panel="windows">
               <p class="req">x86_64, Windows 10 or newer. New, so expect rough edges.</p>
-              <p>Run the setup. Then click Install on a module whose servers are missing: SLOPP gets Apache, PHP, MariaDB and Mailpit with winget. An existing XAMPP's work too.</p>
+              <div class="well cmd">
+                <code id="cmd-windows">irm https://slopp.gs0.me/install.ps1 | iex</code>
+                <button class="btn copy" type="button" data-copy="cmd-windows">Copy</button>
+              </div>
+              <p class="muted">In PowerShell. Runs the setup for your user, then installs the missing servers (Apache, PHP, MariaDB and Mailpit) with winget. Or run the setup yourself and click Install on a module whose servers are missing. An existing XAMPP's work too.</p>
               <div class="files">
                 <a class="btn primary" data-asset="windows-x86_64-setup.exe" href="https://github.com/gabors0/slopp/releases/latest">Download setup</a>
                 <a class="btn" data-asset="windows-x86_64.zip" href="https://github.com/gabors0/slopp/releases/latest">Portable zip</a>
