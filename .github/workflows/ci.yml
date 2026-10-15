@@ -132,17 +132,14 @@ jobs:
           foreach ($id in 'ApacheLounge.httpd', 'PHP.PHP.8.5', 'MariaDB.Server', 'axllent.mailpit') {
             winget install --exact --id $id --source winget --silent --disable-interactivity `
               --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -eq $hashMismatch -and $id -eq 'ApacheLounge.httpd') {
-              # Apache Lounge replaces its zips in place, so winget's manifest
-              # often lists a stale hash (users see the same, and SLOPP says
-              # so). Take the manifest's zip as is, unpacked where Apache
-              # Lounge's readme puts it: C:\Apache24, which SLOPP searches.
-              $url = (winget show --exact --id $id --source winget |
-                Select-String 'Installer Url:\s*(\S+)').Matches[0].Groups[1].Value
-              Write-Host "winget's hash for $id is stale; unpacking $url to C:\Apache24"
-              Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\httpd.zip"
-              Expand-Archive "$env:RUNNER_TEMP\httpd.zip" -DestinationPath C:\
-              if (-not (Test-Path C:\Apache24\bin\httpd.exe)) { throw 'no C:\Apache24\bin\httpd.exe' }
+            if ($LASTEXITCODE -eq $hashMismatch -and $id -eq 'ApacheLounge.httpd' `
+                -and (Test-Path C:\tools\Apache24\bin\httpd.exe)) {
+              # winget's manifest doesn't match the file Apache Lounge serves
+              # (its https URL redirects to http). Neither winget nor SLOPP
+              # installs an unchecked download, so test with the image's own
+              # Apache Lounge build instead of winget's.
+              Write-Host "::warning::winget's $id doesn't match its download; using the image's C:\tools\Apache24"
+              "SLOPP_CI_APACHE=C:\tools\Apache24\bin" >> $env:GITHUB_ENV
             } elseif ($LASTEXITCODE -ne 0) {
               throw "winget install $id failed ($LASTEXITCODE)"
             }
@@ -159,6 +156,7 @@ jobs:
           $env:Path = ($env:Path -split ';' | Where-Object {
             $_ -and $_ -notmatch '\\tools\\(php|Apache)|\\MySQL\\'
           }) -join ';'
+          if ($env:SLOPP_CI_APACHE) { $env:Path = "$env:SLOPP_CI_APACHE;$env:Path" }
           cargo run --locked -q -p slopp-core --bin sloppctl -- paths | Tee-Object -Variable paths
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not ($paths -match '\(mod_php\)')) { throw 'PHP is not mod_php' }
