@@ -103,12 +103,15 @@ version=${version#v}
 # Without a terminal it goes ahead.
 confirm() {
     [ "$assume_yes" = yes ] && return 0
+    reply=
     if [ -t 0 ]; then
         printf '%s [Y/n] ' "$1"
-        read -r reply
-    elif [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r reply || true
+    # In a subshell: a failed redirection of a special builtin like `:`
+    # ends a POSIX shell (no controlling terminal).
+    elif (: </dev/tty) 2>/dev/null; then
         printf '%s [Y/n] ' "$1" >/dev/tty
-        read -r reply </dev/tty
+        read -r reply </dev/tty || true
     else
         return 0
     fi
@@ -231,14 +234,26 @@ ctl() {
     fi
 }
 
-# Whether sloppctl runs here; an AppImage that needs FUSE but has none
-# gets to unpack itself instead.
+# Whether sloppctl runs here, and not the panel (the AppImage picks by
+# the name it was started as, which a launcher like NixOS's appimage-run
+# doesn't pass on); an AppImage that needs FUSE but has none gets to unpack
+# itself instead.
+is_ctl() {
+    # The panel would run until stopped.
+    set -- "$ctl_bin" help
+    have timeout && set -- timeout -k 5 60 "$@"
+    if [ -n "$extract" ]; then
+        APPIMAGE_EXTRACT_AND_RUN=1 "$@" </dev/null 2>/dev/null | grep -q '^Usage: sloppctl'
+    else
+        "$@" </dev/null 2>/dev/null | grep -q '^Usage: sloppctl'
+    fi
+}
 ctl_works() {
     extract=
-    ctl help >/dev/null 2>&1 && return 0
+    is_ctl && return 0
     [ "$os" = Linux ] || return 1
     extract=1
-    if ctl help >/dev/null 2>&1; then
+    if is_ctl; then
         warn "FUSE isn't available, so the AppImage unpacks itself on every start; install fuse3 (fusermount3) to run it normally"
         return 0
     fi
@@ -254,6 +269,7 @@ ctl_path() {
 # The servers sloppctl doesn't find, as "Apache, MariaDB and Mailpit".
 missing_servers() {
     out=$(ctl paths) || return 1
+    case "$out" in *"Stack root"*) ;; *) return 1 ;; esac
     printf '%s\n' "$out" | awk '
         $NF != "found" || $(NF - 1) != "not" { next }
         $1 == "httpd" { m = m ", Apache" }
