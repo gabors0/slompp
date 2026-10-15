@@ -3,9 +3,10 @@
 #
 #   curl -fsSL https://slopp.gs0.me/install.sh | sh
 #
-# It installs the servers SLOPP drives (Apache, PHP and MariaDB) with your
-# system's package manager, then installs SLOPP itself from the latest
-# release. Options go after `sh -s --`, as in
+# It installs the servers SLOPP drives (Apache, PHP, MariaDB and Mailpit)
+# with your system's package manager, then installs SLOPP itself from the
+# latest release. The Linux distributions don't package Mailpit, so there
+# SLOPP downloads it from GitHub into its stack once it's installed. Options go after `sh -s --`, as in
 # `curl -fsSL https://slopp.gs0.me/install.sh | sh -s -- --no-deps`:
 #
 #   --no-deps        install SLOPP only, leave the servers alone
@@ -208,6 +209,7 @@ install_linux() {
     ln -sf slopp.AppImage "$dir/slopp"
     ln -sf slopp.AppImage "$dir/sloppctl"
     say "Installed $appimage"
+    install_linux_mailpit
     case ":$PATH:" in
         *":$dir:"*) ;;
         *)
@@ -221,20 +223,42 @@ install_linux() {
     fi
 }
 
+# sloppctl downloads Mailpit's static binary from its GitHub release into the
+# stack, where SLOPP finds it; no root needed. The stack is in its default
+# place unless the panel's settings moved it.
+install_linux_mailpit() {
+    [ "$deps" = yes ] || return 0
+    stack=${SLOPP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/slopp}
+    if found mailpit || [ -x "$stack/mailpit/bin/mailpit" ]; then
+        note "Mailpit is already installed"
+        return 0
+    fi
+    if confirm "Download Mailpit from GitHub?"; then
+        say "Downloading Mailpit"
+        "$dir/sloppctl" install-servers mailpit ||
+            warn "could not get Mailpit; SLOPP's Install button can try again"
+    else
+        note "skipping Mailpit"
+    fi
+}
+
 install_macos_deps() {
     [ "$deps" = yes ] || return 0
+    formulae=
+    servers_present || formulae="php mariadb"
+    found mailpit || formulae="${formulae:+$formulae }mailpit"
+    if [ -z "$formulae" ]; then
+        note "PHP, MariaDB and Mailpit are already installed"
+        return 0
+    fi
     if ! have brew; then
         warn "Homebrew is not installed; get it from https://brew.sh"
-        note "then run: brew install php mariadb"
+        note "then run: brew install $formulae"
         return 0
     fi
-    if servers_present; then
-        note "PHP and MariaDB are already installed"
-        return 0
-    fi
-    if confirm "Install PHP and MariaDB with Homebrew?"; then
-        say "Installing php mariadb"
-        brew install php mariadb || warn "brew install failed; install php and mariadb yourself"
+    if confirm "Install $formulae with Homebrew?"; then
+        say "Installing $formulae"
+        brew install $formulae || warn "brew install failed; install $formulae yourself"
     else
         note "skipping the servers"
     fi
