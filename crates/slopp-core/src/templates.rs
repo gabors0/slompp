@@ -717,7 +717,7 @@ mod tests {
         assert!(windows.contains("\n[mail function]\n"), "{windows}");
         assert!(windows.contains("\nsendmail_from = \"php@localhost\"\n"));
         assert!(
-            php_mail_ini(&Layout::new("/home/me/my stack"))
+            php_mail_ini_for(&Layout::new("/home/me/my stack"), false)
                 .contains("sendmail_path = \"'/home/me/my stack/run/sendmail' -t -i\"")
         );
 
