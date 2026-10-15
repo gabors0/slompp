@@ -5,6 +5,7 @@
 #
 #   ubuntu   apt's Apache with PHP-FPM, and with mod_php (prefork)
 #   macos    Homebrew's httpd with mod_php, and Apple's httpd with PHP-FPM
+#   windows  winget's packages, the ones the Install button gets (mod_php)
 #
 # Releases are release.yml's; tag pushes don't run this.
 name: CI
@@ -111,3 +112,54 @@ jobs:
             mod_php) grep -q '(mod_php)' paths.txt ;;
           esac
       - run: cargo test --locked -p slopp-core --test servers -- --ignored
+
+  servers-windows:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: servers (windows-2025, mod_php)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the servers (winget)
+        shell: pwsh
+        run: |
+          winget --version
+          # The packages and the PHP series of crates/slopp-core/src/winget.rs.
+          # --silent, unlike SLOPP: nobody is here to click, and the runner is
+          # already elevated for MariaDB's MSI.
+          $hashMismatch = -1978335215  # APPINSTALLER_CLI_ERROR_INSTALLER_HASH_MISMATCH
+          foreach ($id in 'ApacheLounge.httpd', 'PHP.PHP.8.5', 'MariaDB.Server', 'axllent.mailpit') {
+            winget install --exact --id $id --source winget --silent --disable-interactivity `
+              --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq $hashMismatch -and $id -eq 'ApacheLounge.httpd' `
+                -and (Test-Path C:\tools\Apache24\bin\httpd.exe)) {
+              # winget's manifest doesn't match the file Apache Lounge serves
+              # (its https URL redirects to http). Neither winget nor SLOPP
+              # installs an unchecked download, so test with the image's own
+              # Apache Lounge build instead of winget's.
+              Write-Host "::warning::winget's $id doesn't match its download; using the image's C:\tools\Apache24"
+              "SLOPP_CI_APACHE=C:\tools\Apache24\bin" >> $env:GITHUB_ENV
+            } elseif ($LASTEXITCODE -ne 0) {
+              throw "winget install $id failed ($LASTEXITCODE)"
+            }
+          }
+      - name: Check which programs SLOPP finds, and run the tests
+        shell: pwsh
+        run: |
+          # The image comes with its own PHP (not necessarily the Thread Safe
+          # build, which alone has the Apache module), Apache and MySQL, and
+          # SLOPP searches PATH before winget's folders. Leave them out, so this
+          # tests what SLOPP finds after its Install button: winget puts its
+          # packages on the user's PATH, which this shell (like a running
+          # panel) doesn't see.
+          $env:Path = ($env:Path -split ';' | Where-Object {
+            $_ -and $_ -notmatch '\\tools\\(php|Apache)|\\MySQL\\'
+          }) -join ';'
+          if ($env:SLOPP_CI_APACHE) { $env:Path = "$env:SLOPP_CI_APACHE;$env:Path" }
+          cargo run --locked -q -p slopp-core --bin sloppctl -- paths | Tee-Object -Variable paths
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not ($paths -match '\(mod_php\)')) { throw 'PHP is not mod_php' }
+          if ($paths -match 'not found') { throw 'a program is missing' }
+          cargo test --locked -p slopp-core --test servers -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -639,8 +639,8 @@ footer a { color: var(--text-2); }
             <div class="card"><h3>Catches PHP's mail</h3><p><code>mail()</code> works with no setup and never reaches a real inbox: Mailpit keeps every message in the stack and shows it at <code>localhost:8025</code>. Try it in the demo above.</p></div>
             <div class="card"><h3>Leaves your config alone</h3><p>Config files are written once and never overwritten. Ports and paths go on the command line at start, so changing a port doesn't touch your edits.</p></div>
             <div class="card"><h3>Finds port conflicts</h3><p>The Ports page shows which program holds 80, 443, 3306, 1025 or 8025, so you know why a server won't start before you go looking.</p></div>
-            <div class="card"><h3>Lives in the tray</h3><p>The icon's lamps show what's running: Apache, MySQL and Mailpit, top to bottom. Its menu starts and stops modules and opens the site or Mailpit's inbox.</p></div>
-            <div class="card"><h3>Keeps servers running</h3><p>Close the panel and your site stays up, as with XAMPP. Settings can stop everything on quit instead.</p></div>
+            <div class="card"><h3>Lives in the tray</h3><p>The icon's lamps show what's running: Apache, MySQL and Mailpit, top to bottom. Its menu starts and stops modules and opens the site, phpMyAdmin or Adminer, and Mailpit's inbox.</p></div>
+            <div class="card"><h3>Keeps servers running</h3><p>Close the panel and your site stays up, as with XAMPP. Settings can stop everything on quit instead. Restarting into an update leaves them running too.</p></div>
           </div>
         </div>
       </section>
@@ -662,7 +662,7 @@ footer a { color: var(--text-2); }
       <section class="group" id="install" aria-labelledby="install-h">
         <div class="label">
           <h2 id="install-h">Install</h2>
-          <p class="desc">One command installs SLOPP and the servers it needs; run it again to update. The builds aren't signed, so the scripts check them against the release's SHA-256 checksums.</p>
+          <p class="desc">One command installs SLOPP and the servers it needs. After that SLOPP updates itself: it says when a release is out, and Update, then Restart, installs it (Settings &rarr; Updates). Running the command again works too. The builds aren't signed, so the scripts check them against the release's SHA-256 checksums.</p>
         </div>
         <div class="content">
           <div class="platforms" role="tablist" aria-label="Platform">

@@ -76,6 +76,93 @@ impl Row {
             },
         }
     }
+
+    /// Takes in a poll of this module begun at `taken`, moves the phase on,
+    /// and says what is worth logging. `now` is when the poll came back.
+    fn observe(
+        &mut self,
+        status: ModuleStatus,
+        problems: Vec<Problem>,
+        taken: Instant,
+        now: Instant,
+    ) -> Vec<Seen> {
+        // Begun before a start or stop finished: it would read a module
+        // that was just launched as gone, or one just stopped as running.
+        if taken < self.settled {
+            return Vec::new();
+        }
+        let was_running = self.status.as_ref().map(ModuleStatus::running);
+        let mut seen = Vec::new();
+        match self.phase {
+            Phase::Starting {
+                launched: Some(launched),
+            } => {
+                if status.ready() {
+                    self.phase = Phase::Idle;
+                    seen.push(Seen::Ready);
+                } else if !status.running() {
+                    self.phase = Phase::Failed;
+                    seen.push(Seen::DiedStarting);
+                } else if now.saturating_duration_since(launched) > START_TIMEOUT {
+                    self.phase = Phase::Failed;
+                    seen.push(Seen::TimedOut);
+                }
+            }
+            Phase::Starting { launched: None } | Phase::Stopping => {}
+            Phase::Idle | Phase::Failed => {
+                if was_running == Some(true) && !status.running() {
+                    self.phase = Phase::Failed;
+                    seen.push(Seen::DiedUnexpectedly);
+                } else if was_running == Some(false) && status.running() {
+                    self.phase = Phase::Idle;
+                    seen.push(Seen::StartedOutside);
+                } else if was_running.is_none() && status.running() {
+                    seen.push(Seen::AlreadyRunning);
+                } else if self.phase == Phase::Failed && status.ready() {
+                    // Opened its ports after the start timed out: slow
+                    // (a first start, a busy disk), not broken.
+                    self.phase = Phase::Idle;
+                    seen.push(Seen::Ready);
+                }
+            }
+        }
+        // Report a port conflict once, when it appears.
+        seen.extend(
+            problems
+                .iter()
+                .filter(|p| matches!(p, Problem::PortInUse { .. }) && !self.problems.contains(p))
+                .map(|p| Seen::Conflict(p.to_string())),
+        );
+        self.status = Some(status);
+        self.problems = problems;
+        seen
+    }
+}
+
+/// What a poll showed about a module that the log should say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Seen {
+    /// Its ports opened after a start (or after the start timed out).
+    Ready,
+    /// It exited before opening its ports.
+    DiedStarting,
+    /// It runs, but didn't open its ports within `START_TIMEOUT`.
+    TimedOut,
+    /// It was running and has exited without being asked to.
+    DiedUnexpectedly,
+    /// It was stopped and runs now, started by something else.
+    StartedOutside,
+    /// It was already running when the panel first looked.
+    AlreadyRunning,
+    /// A port conflict that wasn't there the last time.
+    Conflict(String),
+}
+
+/// "Running on ports 8080 and 8443".
+fn running_text(status: &ModuleStatus) -> String {
+    let ports: Vec<String> = status.ports.iter().map(|p| p.port.to_string()).collect();
+    let what = if ports.len() == 1 { "port" } else { "ports" };
+    format!("Running on {what} {}", ports.join(" and "))
 }
 
 /// Where updating SLOPP itself stands.
@@ -429,93 +516,45 @@ impl Controller {
         })
     }
 
-    fn log_running(&mut self, status: &ModuleStatus) {
-        let ports: Vec<String> = status.ports.iter().map(|p| p.port.to_string()).collect();
-        let what = if ports.len() == 1 { "port" } else { "ports" };
-        self.log.push(
-            Some(status.module),
-            Kind::Ok,
-            format!("Running on {what} {}", ports.join(" and ")),
-        );
-    }
-
     fn apply_snapshot(&mut self, (taken, modules, listeners): Snapshot, cx: &mut Context<Self>) {
+        let now = Instant::now();
         for (status, problems) in modules {
             let m = status.module;
-            // Begun before a start or stop finished: it would read a module
-            // that was just launched as gone, or one just stopped as running.
-            if taken < self.row(m).settled {
-                continue;
-            }
-            let was_running = self.row(m).status.as_ref().map(ModuleStatus::running);
-            let phase = self.row(m).phase;
-            match phase {
-                Phase::Starting {
-                    launched: Some(launched),
-                } => {
-                    if status.ready() {
-                        self.row_mut(m).phase = Phase::Idle;
-                        self.log_running(&status);
-                    } else if !status.running() {
-                        self.row_mut(m).phase = Phase::Failed;
-                        let details = self.stack.failure_details(m);
-                        self.log.push(
-                            Some(m),
-                            Kind::Error,
-                            format!("{m} stopped while starting.\n{details}"),
-                        );
-                    } else if launched.elapsed() > START_TIMEOUT {
-                        self.row_mut(m).phase = Phase::Failed;
-                        self.log.push(
-                            Some(m),
-                            Kind::Error,
-                            format!(
-                                "{m} is running but did not open its ports within {}s. \
-                                 If it is only slow, it turns green when it does.",
-                                START_TIMEOUT.as_secs()
-                            ),
-                        );
+            for seen in self.row_mut(m).observe(status, problems, taken, now) {
+                let (kind, text) = match seen {
+                    Seen::Ready => {
+                        let status = self.row(m).status.as_ref();
+                        (Kind::Ok, running_text(status.expect("just observed")))
                     }
-                }
-                Phase::Starting { launched: None } | Phase::Stopping => {}
-                Phase::Idle | Phase::Failed => {
-                    if was_running == Some(true) && !status.running() {
-                        self.row_mut(m).phase = Phase::Failed;
-                        let details = self.stack.failure_details(m);
-                        self.log.push(
-                            Some(m),
-                            Kind::Error,
-                            format!("{m} stopped unexpectedly.\n{details}"),
-                        );
-                    } else if was_running == Some(false) && status.running() {
-                        self.row_mut(m).phase = Phase::Idle;
-                        self.log.push(
-                            Some(m),
-                            Kind::Info,
-                            format!("{m} was started outside the panel"),
-                        );
-                    } else if was_running.is_none() && status.running() {
-                        self.log
-                            .push(Some(m), Kind::Info, format!("{m} is already running"));
-                    } else if phase == Phase::Failed && status.ready() {
-                        // Opened its ports after the start timed out: slow
-                        // (a first start, a busy disk), not broken.
-                        self.row_mut(m).phase = Phase::Idle;
-                        self.log_running(&status);
+                    Seen::DiedStarting => (
+                        Kind::Error,
+                        format!(
+                            "{m} stopped while starting.\n{}",
+                            self.stack.failure_details(m)
+                        ),
+                    ),
+                    Seen::TimedOut => (
+                        Kind::Error,
+                        format!(
+                            "{m} is running but did not open its ports within {}s. \
+                             If it is only slow, it turns green when it does.",
+                            START_TIMEOUT.as_secs()
+                        ),
+                    ),
+                    Seen::DiedUnexpectedly => (
+                        Kind::Error,
+                        format!(
+                            "{m} stopped unexpectedly.\n{}",
+                            self.stack.failure_details(m)
+                        ),
+                    ),
+                    Seen::StartedOutside => {
+                        (Kind::Info, format!("{m} was started outside the panel"))
                     }
-                }
-            }
-            // Report a port conflict once, when it appears.
-            let row = self.row_mut(m);
-            let new_conflicts: Vec<String> = problems
-                .iter()
-                .filter(|p| matches!(p, Problem::PortInUse { .. }) && !row.problems.contains(p))
-                .map(Problem::to_string)
-                .collect();
-            row.status = Some(status);
-            row.problems = problems;
-            for text in new_conflicts {
-                self.log.push(Some(m), Kind::Error, text);
+                    Seen::AlreadyRunning => (Kind::Info, format!("{m} is already running")),
+                    Seen::Conflict(text) => (Kind::Error, text),
+                };
+                self.log.push(Some(m), kind, text);
             }
         }
         if let Some(listeners) = listeners {
@@ -957,44 +996,15 @@ impl Controller {
         }
         self.update = UpdateState::Checking;
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async { update::latest() }).await;
+            let result = cx
+                .background_spawn(async { update::latest().map_err(|err| format!("{err:#}")) })
+                .await;
             this.update(cx, |this, cx| {
-                this.update = match result {
-                    Ok(release) if update::is_newer(&release.version, &current_version()) => {
-                        if previous != UpdateState::Available(release.clone()) {
-                            this.log.push(
-                                None,
-                                Kind::Info,
-                                format!("SLOPP {} is available", release.version),
-                            );
-                        }
-                        UpdateState::Available(release)
-                    }
-                    Ok(_) => {
-                        if manual {
-                            this.log.push(None, Kind::Ok, "SLOPP is up to date");
-                        }
-                        UpdateState::UpToDate
-                    }
-                    Err(err) => {
-                        let error = format!("{err:#}");
-                        if manual {
-                            this.log.push(
-                                None,
-                                Kind::Error,
-                                format!("Checking for updates failed: {error}"),
-                            );
-                            UpdateState::Failed {
-                                error,
-                                release: None,
-                            }
-                        } else {
-                            // Offline, most likely; the next check may do.
-                            tracing::info!("checking for updates failed: {error}");
-                            previous
-                        }
-                    }
-                };
+                let (state, line) = checked(previous, result, &current_version(), manual);
+                if let Some((kind, text)) = line {
+                    this.log.push(None, kind, text);
+                }
+                this.update = state;
                 this.changed(cx);
             })
             .ok();
@@ -1189,6 +1199,45 @@ impl Controller {
     }
 }
 
+/// What a finished update check, begun in state `previous`, makes the state,
+/// and the line to log if any. `manual` (the Check button) also reports
+/// when there's nothing new, or the check failed.
+fn checked(
+    previous: UpdateState,
+    result: Result<Release, String>,
+    current: &str,
+    manual: bool,
+) -> (UpdateState, Option<(Kind, String)>) {
+    match result {
+        Ok(release) if update::is_newer(&release.version, current) => {
+            // Each daily check finds it again; say so once.
+            let line = (previous != UpdateState::Available(release.clone())).then(|| {
+                (
+                    Kind::Info,
+                    format!("SLOPP {} is available", release.version),
+                )
+            });
+            (UpdateState::Available(release), line)
+        }
+        Ok(_) => (
+            UpdateState::UpToDate,
+            manual.then(|| (Kind::Ok, "SLOPP is up to date".to_string())),
+        ),
+        Err(error) if manual => (
+            UpdateState::Failed {
+                error: error.clone(),
+                release: None,
+            },
+            Some((Kind::Error, format!("Checking for updates failed: {error}"))),
+        ),
+        Err(error) => {
+            // Offline, most likely; the next check may do.
+            tracing::info!("checking for updates failed: {error}");
+            (previous, None)
+        }
+    }
+}
+
 fn progress_text(progress: &Progress) -> String {
     match progress {
         Progress::Checking => "Looking up the latest version…".into(),
@@ -1198,5 +1247,230 @@ fn progress_text(progress: &Progress) -> String {
         } => format!("Downloading {version}… {:.0}%", f * 100.0),
         Progress::Downloading { version, .. } => format!("Downloading {version}…"),
         Progress::Unpacking { version } => format!("Unpacking {version}…"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use slopp_core::stack::PortState;
+
+    use super::*;
+
+    fn row(phase: Phase, status: Option<ModuleStatus>) -> Row {
+        Row {
+            module: Module::Apache,
+            status,
+            problems: Vec::new(),
+            phase,
+            settled: Instant::now(),
+        }
+    }
+
+    /// Apache with `pids` processes and its HTTP port open or not.
+    fn apache(pids: &[u32], open: bool) -> ModuleStatus {
+        ModuleStatus {
+            module: Module::Apache,
+            pids: pids.to_vec(),
+            ports: vec![PortState {
+                port: 8080,
+                label: "HTTP",
+                open,
+            }],
+        }
+    }
+
+    fn launched(at: Instant) -> Phase {
+        Phase::Starting { launched: Some(at) }
+    }
+
+    /// Observes `status` with a poll begun just now, `after` the launch.
+    fn poll(row: &mut Row, status: ModuleStatus, after: Duration) -> Vec<Seen> {
+        let taken = Instant::now();
+        let now = match row.phase {
+            Phase::Starting { launched: Some(at) } => at + after,
+            _ => taken,
+        };
+        row.observe(status, Vec::new(), taken, now)
+    }
+
+    #[test]
+    fn a_start_turns_green_when_the_ports_open() {
+        let mut r = row(launched(Instant::now()), None);
+        assert_eq!(poll(&mut r, apache(&[1], false), Duration::ZERO), []);
+        assert_eq!(r.lamp(), Lamp::Busy);
+        assert_eq!(
+            poll(&mut r, apache(&[1], true), Duration::ZERO),
+            [Seen::Ready]
+        );
+        assert_eq!(
+            (r.phase, r.lamp(), r.state_label()),
+            (Phase::Idle, Lamp::On, "Running")
+        );
+        // Nothing more to say while it stays up.
+        assert_eq!(poll(&mut r, apache(&[1], true), Duration::ZERO), []);
+    }
+
+    #[test]
+    fn a_server_that_exits_while_starting_failed() {
+        let mut r = row(launched(Instant::now()), None);
+        assert_eq!(
+            poll(&mut r, apache(&[], false), Duration::ZERO),
+            [Seen::DiedStarting]
+        );
+        assert_eq!(r.phase, Phase::Failed);
+        assert_eq!(
+            (r.lamp(), r.state_label()),
+            (Lamp::Fault, "Stopped with an error")
+        );
+    }
+
+    #[test]
+    fn a_slow_start_times_out_then_turns_green() {
+        let mut r = row(launched(Instant::now()), None);
+        let late = START_TIMEOUT + Duration::from_secs(1);
+        assert_eq!(poll(&mut r, apache(&[1], false), START_TIMEOUT), []);
+        assert_eq!(poll(&mut r, apache(&[1], false), late), [Seen::TimedOut]);
+        assert_eq!(r.phase, Phase::Failed);
+        // Still not open: the error isn't repeated.
+        assert_eq!(poll(&mut r, apache(&[1], false), late), []);
+        assert_eq!(poll(&mut r, apache(&[1], true), late), [Seen::Ready]);
+        assert_eq!(r.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn setup_and_stopping_wait_for_their_own_result() {
+        for phase in [Phase::Starting { launched: None }, Phase::Stopping] {
+            let mut r = row(phase, Some(apache(&[1], true)));
+            assert_eq!(poll(&mut r, apache(&[], false), Duration::ZERO), []);
+            assert_eq!(r.phase, phase);
+            assert!(r.busy());
+        }
+    }
+
+    #[test]
+    fn an_exit_nobody_asked_for_is_a_failure() {
+        let mut r = row(Phase::Idle, Some(apache(&[1], true)));
+        assert_eq!(
+            poll(&mut r, apache(&[], false), Duration::ZERO),
+            [Seen::DiedUnexpectedly]
+        );
+        assert_eq!(r.phase, Phase::Failed);
+        // Reported once.
+        assert_eq!(poll(&mut r, apache(&[], false), Duration::ZERO), []);
+    }
+
+    #[test]
+    fn servers_started_elsewhere_are_noticed() {
+        // Running before the panel's first look.
+        let mut r = row(Phase::Idle, None);
+        assert_eq!(
+            poll(&mut r, apache(&[1], true), Duration::ZERO),
+            [Seen::AlreadyRunning]
+        );
+        assert_eq!(r.phase, Phase::Idle);
+
+        // Started later, by sloppctl say, also after a failed start.
+        for phase in [Phase::Idle, Phase::Failed] {
+            let mut r = row(phase, Some(apache(&[], false)));
+            assert_eq!(
+                poll(&mut r, apache(&[1], true), Duration::ZERO),
+                [Seen::StartedOutside]
+            );
+            assert_eq!(r.phase, Phase::Idle);
+        }
+    }
+
+    #[test]
+    fn a_poll_begun_before_a_start_or_stop_finished_is_ignored() {
+        let taken = Instant::now();
+        // The stop finished after the poll began, and found it running.
+        let mut r = row(Phase::Idle, Some(apache(&[], false)));
+        r.settled = taken + Duration::from_millis(1);
+        let seen = r.observe(apache(&[1], true), Vec::new(), taken, r.settled);
+        assert_eq!(seen, []);
+        assert!(!r.running());
+    }
+
+    #[test]
+    fn port_conflicts_are_reported_once() {
+        let taken = Problem::PortInUse {
+            port: 8080,
+            owner: None,
+        };
+        let mut r = row(Phase::Idle, Some(apache(&[], false)));
+        let now = Instant::now();
+        let seen = r.observe(apache(&[], false), vec![taken.clone()], now, now);
+        assert_eq!(seen, [Seen::Conflict(taken.to_string())]);
+        let seen = r.observe(apache(&[], false), vec![taken.clone()], now, now);
+        assert_eq!(seen, []);
+        // Freed, then taken again: a new conflict.
+        r.observe(apache(&[], false), Vec::new(), now, now);
+        let seen = r.observe(apache(&[], false), vec![taken.clone()], now, now);
+        assert_eq!(seen, [Seen::Conflict(taken.to_string())]);
+    }
+
+    #[test]
+    fn running_text_names_the_ports() {
+        let mut status = apache(&[1], true);
+        assert_eq!(running_text(&status), "Running on port 8080");
+        status.ports.push(PortState {
+            port: 8443,
+            label: "HTTPS",
+            open: true,
+        });
+        assert_eq!(running_text(&status), "Running on ports 8080 and 8443");
+    }
+
+    fn release(version: &str) -> Release {
+        update::parse_release(&format!(
+            r#"{{"tag_name": "v{version}", "html_url": "https://example.com/v{version}", "assets": []}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_newer_release_is_announced_once() {
+        let (state, line) = checked(UpdateState::Unknown, Ok(release("0.4.0")), "0.3.1", false);
+        assert_eq!(state, UpdateState::Available(release("0.4.0")));
+        assert_eq!(line, Some((Kind::Info, "SLOPP 0.4.0 is available".into())));
+        // The next day's check finds the same one.
+        let (state, line) = checked(state, Ok(release("0.4.0")), "0.3.1", false);
+        assert_eq!(state, UpdateState::Available(release("0.4.0")));
+        assert_eq!(line, None);
+        // And a newer one again.
+        let (_, line) = checked(state, Ok(release("0.4.1")), "0.3.1", false);
+        assert_eq!(line, Some((Kind::Info, "SLOPP 0.4.1 is available".into())));
+    }
+
+    #[test]
+    fn up_to_date_is_only_said_when_asked() {
+        for current in ["0.3.1", "0.4.0-dev"] {
+            let (state, line) = checked(UpdateState::Unknown, Ok(release("0.3.1")), current, false);
+            assert_eq!((state, line), (UpdateState::UpToDate, None), "{current}");
+        }
+        let (state, line) = checked(UpdateState::Unknown, Ok(release("0.3.1")), "0.3.1", true);
+        assert_eq!(state, UpdateState::UpToDate);
+        assert_eq!(line, Some((Kind::Ok, "SLOPP is up to date".into())));
+    }
+
+    #[test]
+    fn a_failed_check_is_quiet_unless_asked() {
+        // Offline at the daily check: whatever was known stays.
+        let known = UpdateState::Available(release("0.4.0"));
+        let (state, line) = checked(known.clone(), Err("offline".into()), "0.3.1", false);
+        assert_eq!((state, line), (known, None));
+
+        let (state, line) = checked(UpdateState::UpToDate, Err("offline".into()), "0.3.1", true);
+        assert_eq!(
+            state,
+            UpdateState::Failed {
+                error: "offline".into(),
+                release: None
+            }
+        );
+        assert_eq!(
+            line,
+            Some((Kind::Error, "Checking for updates failed: offline".into()))
+        );
     }
 }

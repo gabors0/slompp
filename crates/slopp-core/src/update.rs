@@ -84,7 +84,8 @@ pub fn latest() -> anyhow::Result<Release> {
     parse_release(&json)
 }
 
-fn parse_release(json: &str) -> anyhow::Result<Release> {
+/// The release in GitHub's API answer for one (`releases/latest`'s).
+pub fn parse_release(json: &str) -> anyhow::Result<Release> {
     let release: serde_json::Value =
         serde_json::from_str(json).context("GitHub's answer isn't JSON")?;
     let tag = release["tag_name"]

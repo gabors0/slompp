@@ -265,11 +265,7 @@ pub(crate) const EXTENSIONS: &[&str] = &[
 ];
 
 fn php_ini_for(layout: &Layout, windows: bool) -> String {
-    let mail = if windows {
-        String::new()
-    } else {
-        php_mail_ini(layout)
-    };
+    let mail = php_mail_ini_for(layout, windows);
     let error_log = conf_path(&layout.php_error_log());
     let tmp = conf_path(&layout.tmp());
     let socket = conf_path(&layout.mysql_socket());
@@ -342,10 +338,23 @@ opcache.revalidate_freq = 0
     )
 }
 
-/// Linux and macOS: php.ini's mail section, sending `mail()` through
-/// [`Layout::sendmail`] to Mailpit. Also added to a php.ini written before
-/// SLOPP had Mailpit ([`crate::setup::ensure_php_mail`]).
+/// php.ini's mail section, sending `mail()` to Mailpit. Also added to a
+/// php.ini written before SLOPP had it ([`crate::setup::ensure_php_mail`]).
 pub fn php_mail_ini(layout: &Layout) -> String {
+    php_mail_ini_for(layout, cfg!(windows))
+}
+
+/// Linux and macOS: through [`Layout::sendmail`]. Windows: over SMTP, whose
+/// address is in [`php_scan_ini`]; PHP for Windows refuses a message with
+/// no `From:` header unless `sendmail_from` names a sender.
+fn php_mail_ini_for(layout: &Layout, windows: bool) -> String {
+    if windows {
+        return "\n[mail function]\n\
+                ; mail() goes to Mailpit: run/php/slopp.ini, which SLOPP writes on every\n\
+                ; start, sets SMTP and smtp_port. The sender of mail without a From: header.\n\
+                sendmail_from = \"php@localhost\"\n"
+            .to_string();
+    }
     let sendmail = sh_quote(&conf_path(&layout.sendmail()));
     format!(
         "\n[mail function]\n\
@@ -353,6 +362,16 @@ pub fn php_mail_ini(layout: &Layout) -> String {
          ; hands each message to Mailpit's SMTP port. Change this for real mail.\n\
          sendmail_path = \"{sendmail} -t -i\"\n"
     )
+}
+
+/// The php.ini setting [`php_mail_ini_for`] is about: while php.ini doesn't
+/// mention it, SLOPP adds the mail section.
+pub fn php_mail_setting(windows: bool) -> &'static str {
+    if windows {
+        "sendmail_from"
+    } else {
+        "sendmail_path"
+    }
 }
 
 /// `text` as one word for `sh`, quoted only when it needs to be.
@@ -693,9 +712,12 @@ mod tests {
         let ini = php_ini_for(&Layout::new("/s"), false);
         assert!(ini.contains("\n[mail function]\n"));
         assert!(ini.contains("\nsendmail_path = \"/s/run/sendmail -t -i\"\n"));
-        assert!(!php_ini_for(&Layout::new("/s"), true).contains("sendmail_path"));
+        let windows = php_ini_for(&Layout::new("/s"), true);
+        assert!(!windows.contains("sendmail_path"), "{windows}");
+        assert!(windows.contains("\n[mail function]\n"), "{windows}");
+        assert!(windows.contains("\nsendmail_from = \"php@localhost\"\n"));
         assert!(
-            php_mail_ini(&Layout::new("/home/me/my stack"))
+            php_mail_ini_for(&Layout::new("/home/me/my stack"), false)
                 .contains("sendmail_path = \"'/home/me/my stack/run/sendmail' -t -i\"")
         );
 

@@ -25,7 +25,8 @@ Tomcat, ProFTPD/FileZilla and Mercury are not included. Mailpit listens on
 stack folder; its Admin button opens the inbox. PHP's `mail()` goes there:
 on Linux and macOS php.ini's `sendmail_path` runs `run/sendmail`, which
 hands the message to Mailpit, and on Windows SLOPP sets PHP's `SMTP` and
-`smtp_port`.
+`smtp_port` (and php.ini's `sendmail_from`, the sender PHP for Windows needs
+for mail without a `From:` header).
 
 SLOPP manages the servers the way the XAMPP control panel does: start and
 stop each module, see its ports and PIDs, open its config and log files, open
@@ -39,7 +40,7 @@ KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
 in the menu bar, on Windows in the notification area (Windows 11 first puts
 new icons behind the ^ arrow; drag it onto the taskbar to keep it in view).
 Its lamps are Apache, MySQL and Mailpit, top to bottom. The menu starts and stops
-modules and opens the site, phpMyAdmin or Adminer; on Linux and Windows a
+modules and opens the site, phpMyAdmin or Adminer, and Mailpit; on Linux and Windows a
 left click shows the panel (the menu is on the right button on Windows).
 
 With a tray, closing the window keeps SLOPP running there (Settings →
@@ -159,7 +160,7 @@ signed modules, so PHP goes through PHP-FPM there). Homebrew's programs are
 found wherever they are, linked or not, also when SLOPP is started from the
 Dock without your shell's `PATH`. MacPorts' `/opt/local` is searched too.
 With Homebrew installed, the Install button on a module whose servers are
-missing runs `brew install` for them (`httpd`, `php`, `mariadb`).
+missing runs `brew install` for them (`httpd`, `php`, `mariadb`, `mailpit`).
 
 On Windows (new, so expect rough edges), the Install button on a module
 whose servers are missing gets them with [winget](https://aka.ms/getwinget),
@@ -220,8 +221,8 @@ machine-specific paths (Apache's module directory, PHP-FPM's socket) are
 passed on the command line at start, so changing ports in Settings doesn't
 touch your edits. The one exception: installing Adminer into a stack whose
 `httpd-slopp.conf` predates it appends the `/adminer` alias (restart Apache
-afterwards), and on Linux and macOS a `php.ini` that doesn't mention
-`sendmail_path` at all gets the mail section that sends to Mailpit
+afterwards), and a `php.ini` that doesn't mention `sendmail_path` at all
+(on Windows `sendmail_from`) gets the mail section that sends to Mailpit
 (comment the line out to keep it out).
 
 phpMyAdmin gets the dark BooDark theme (orange, like the panel) as its
@@ -241,15 +242,15 @@ macOS), otherwise 8080/8443/3306.
 `sloppctl` is the `lampp` script's counterpart:
 
 ```sh
-sloppctl start [apache|mysql]
-sloppctl stop [apache|mysql]
-sloppctl restart [apache|mysql]
+sloppctl start [apache|mysql|mailpit]
+sloppctl stop [apache|mysql|mailpit]
+sloppctl restart [apache|mysql|mailpit]
 sloppctl status
 sloppctl ports               # who listens where
 sloppctl paths               # where the stack and programs are
 sloppctl install-phpmyadmin
 sloppctl install-adminer
-sloppctl install-servers [apache|mysql]   # Windows: the missing servers, with winget
+sloppctl install-servers [module]   # the missing servers: winget, Homebrew, apt/dnf/pacman
 ```
 
 ## Layout
@@ -257,7 +258,9 @@ sloppctl install-servers [apache|mysql]   # Windows: the missing servers, with w
 - `crates/slopp-core`: no GUI. Finds the programs (`toolchain`), writes the
   stack's config (`setup`, `templates`), starts/stops/watches the servers
   (`stack`, `process`), lists listening ports (`net`), installs phpMyAdmin and Adminer (`dbadmin`),
-  installs the servers with winget on Windows (`winget`), and the `sloppctl` binary.
+  installs the missing servers (`install`: `winget` on Windows, `brew` on macOS,
+  `linux` with pkexec, `mailpit` from GitHub), updates SLOPP itself (`update`),
+  and the `sloppctl` binary.
 - `crates/slopp`: the GPUI panel and the tray icon.
 - `scripts/bundle-macos.sh`: builds `SLOPP.app` (and with `--dmg` the disk
   image), `scripts/bundle-linux.sh` the AppImage, and
