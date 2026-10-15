@@ -1,6 +1,6 @@
 [package]
 name = "slopp-core"
-description = "SLOPP core: runs the stack (Apache, PHP, MariaDB, phpMyAdmin) without a GUI"
+description = "SLOPP core: runs the stack (Apache, PHP, MariaDB, phpMyAdmin, Mailpit) without a GUI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,6 +21,8 @@ ureq = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 getrandom = "0.3"
 sha2 = "0.10"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

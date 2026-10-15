@@ -246,7 +246,7 @@ fn render_actions(
             .label("Install")
             .tooltip(format!(
                 "Install the missing servers {}",
-                slopp_core::install::VIA
+                slopp_core::install::via(&stack.installable(m))
             ))
             .loading(getting == Some(m))
             .disabled(getting.is_some())

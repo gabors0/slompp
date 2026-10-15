@@ -1,5 +1,5 @@
 //! The SLOPP stack without a GUI: finds the server binaries (Apache, PHP,
-//! MariaDB), lays out an XAMPP-style root (`htdocs`, `apache/`, `php/`,
+//! MariaDB, Mailpit), lays out an XAMPP-style root (`htdocs`, `apache/`, `php/`,
 //! `mysql/`, `phpMyAdmin/`, `adminer/`), writes its configuration and
 //! starts, stops and watches the servers.
 //!
@@ -13,6 +13,7 @@ pub mod desktop;
 pub mod install;
 pub mod layout;
 pub mod linux;
+pub mod mailpit;
 pub mod module;
 pub mod net;
 pub mod phpmyadmin;

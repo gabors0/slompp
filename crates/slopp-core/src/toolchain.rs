@@ -255,16 +255,31 @@ fn detect_mariadb(overrides: &Binaries) -> Option<MariaDb> {
     })
 }
 
+impl Toolchain {
+    /// Takes the Mailpit at `bin` when none was found elsewhere: Linux's
+    /// Install downloads it into the stack.
+    pub fn with_mailpit_at(mut self, bin: &Path) -> Toolchain {
+        if self.mailpit.is_none() && is_executable(bin) {
+            self.mailpit = Some(mailpit_at(bin.to_path_buf()));
+        }
+        self
+    }
+}
+
 fn detect_mailpit(overrides: &Binaries) -> Option<Mailpit> {
     let bin = overrides
         .mailpit
         .clone()
         .or_else(|| find_program(&["mailpit"]))?;
+    Some(mailpit_at(bin))
+}
+
+fn mailpit_at(bin: PathBuf) -> Mailpit {
     // Without the flag `version` asks GitHub for the latest release.
     let version = run_capture(&bin, &["version", "--no-release-check"])
         .as_deref()
         .and_then(parse_mailpit_version);
-    Some(Mailpit { bin, version })
+    Mailpit { bin, version }
 }
 
 /// Directories searched after `PATH`: system binaries that are often missing

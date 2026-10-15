@@ -216,7 +216,7 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         println!("Nothing to install: the servers were found.");
         return true;
     }
-    let installer = match Installer::find(&packages) {
+    let installer = match Installer::find(&packages, stack.layout()) {
         Ok(installer) => installer,
         Err(unavailable) => {
             eprintln!("{}", unavailable.message);
@@ -224,9 +224,9 @@ fn install_servers(stack: &Stack, modules: &[Module]) -> bool {
         }
     };
     println!(
-        "Installing {} with {}...",
+        "Installing {} {}...",
         install::names(&packages),
-        installer.name()
+        installer.via()
     );
     let ok = match installer.install(&packages, |line| println!("  {line}")) {
         Ok(()) => true,

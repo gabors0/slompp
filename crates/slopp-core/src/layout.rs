@@ -196,6 +196,12 @@ impl Layout {
         self.root.join("mailpit")
     }
 
+    /// Mailpit as Linux's Install downloads it; the distributions don't
+    /// package it.
+    pub fn mailpit_bin(&self) -> PathBuf {
+        self.mailpit().join("bin/mailpit")
+    }
+
     /// The mail Mailpit caught, kept across restarts.
     pub fn mailpit_db(&self) -> PathBuf {
         self.mailpit().join("mailpit.db")

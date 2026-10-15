@@ -88,7 +88,7 @@ pub struct Stack {
 impl Stack {
     pub fn new(settings: Settings) -> Self {
         let layout = Layout::new(settings.root());
-        let tools = Toolchain::detect(&settings.binaries);
+        let tools = Toolchain::detect(&settings.binaries).with_mailpit_at(&layout.mailpit_bin());
         Self {
             layout,
             settings,
@@ -193,7 +193,7 @@ impl Stack {
                     } else {
                         format!(
                             "Install gets it {}, or set its path in Settings.",
-                            install::VIA
+                            install::via(&[Package::Apache])
                         )
                     },
                 }),
@@ -214,7 +214,7 @@ impl Stack {
                                 format!(
                                     "Install gets it {}, or set the path of PHP-FPM or the \
                                      Apache module (libphp.so) in Settings.",
-                                    install::VIA
+                                    install::via(&[Package::Php])
                                 )
                             },
                         });
@@ -227,7 +227,7 @@ impl Stack {
                         what: "MariaDB",
                         hint: format!(
                             "Install gets it {}, or set the path of {} in Settings.",
-                            install::VIA,
+                            install::via(&[Package::MariaDb]),
                             if cfg!(windows) {
                                 "mariadbd.exe"
                             } else {
@@ -243,7 +243,7 @@ impl Stack {
                         what: "Mailpit",
                         hint: format!(
                             "Install gets it {}, or set the path of {} in Settings.",
-                            install::VIA,
+                            install::via(&[Package::Mailpit]),
                             if cfg!(windows) {
                                 "mailpit.exe"
                             } else {

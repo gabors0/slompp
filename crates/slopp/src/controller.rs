@@ -769,7 +769,7 @@ impl Controller {
         if packages.is_empty() {
             return;
         }
-        let installer = match Installer::find(&packages) {
+        let installer = match Installer::find(&packages, self.stack.layout()) {
             Ok(installer) => installer,
             Err(unavailable) => {
                 self.log
@@ -786,7 +786,11 @@ impl Controller {
         self.log.push(
             Some(module),
             Kind::Info,
-            format!("Installing {} with {name}…", install::names(&packages)),
+            format!(
+                "Installing {} {}…",
+                install::names(&packages),
+                installer.via()
+            ),
         );
         self.getting = Some((module, format!("Starting {name}…")));
 
