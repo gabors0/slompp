@@ -23,6 +23,7 @@ pub mod setup;
 pub mod stack;
 pub mod templates;
 pub mod toolchain;
+pub mod update;
 pub mod winget;
 
 pub use dbadmin::DbAdmin;

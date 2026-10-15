@@ -7,6 +7,7 @@ use std::io::{BufRead as _, BufReader, Write as _};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -65,7 +66,11 @@ pub fn serve(listener: UnixListener, commands: async_channel::Sender<TrayCommand
     });
 }
 
-/// Removes the socket on a clean exit.
+/// Removes the socket on a clean exit, or before handing over to an
+/// update. Only once: after a handover the socket is the new SLOPP's.
 pub fn release() {
-    let _ = std::fs::remove_file(socket_path());
+    static RELEASED: AtomicBool = AtomicBool::new(false);
+    if !RELEASED.swap(true, Ordering::SeqCst) {
+        let _ = std::fs::remove_file(socket_path());
+    }
 }

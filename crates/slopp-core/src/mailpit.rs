@@ -9,7 +9,6 @@ use std::io::Read as _;
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
-use sha2::{Digest as _, Sha256};
 
 const LATEST_URL: &str = "https://api.github.com/repos/axllent/mailpit/releases/latest";
 
@@ -97,25 +96,13 @@ pub fn install(dest: &Path, mut progress: impl FnMut(String)) -> anyhow::Result<
                 });
             }
         })?;
-        check_sha256(&archive, &release.sha256)?;
+        crate::dbadmin::check_sha256(&archive, &release.sha256)?;
         progress(format!("Unpacking Mailpit {version}…"));
         unpack(&archive, dest)
     })();
     let _ = std::fs::remove_file(&archive);
     result?;
     Ok(version)
-}
-
-fn check_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
-    let mut file =
-        std::fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).with_context(|| format!("reading {}", path.display()))?;
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected {
-        bail!("the download doesn't match GitHub's digest (expected {expected}, got {actual})");
-    }
-    Ok(())
 }
 
 /// Takes the `mailpit` program out of the release's archive and puts it at
@@ -230,11 +217,11 @@ mod tests {
 
         let file = dir.path().join("file");
         std::fs::write(&file, "abc").unwrap();
-        check_sha256(
+        crate::dbadmin::check_sha256(
             &file,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         )
         .unwrap();
-        assert!(check_sha256(&file, "00").is_err());
+        assert!(crate::dbadmin::check_sha256(&file, "00").is_err());
     }
 }

@@ -44,7 +44,7 @@ pub fn integrate() {
 /// `appimage-run` if it started this AppImage (it unpacks them into its
 /// cache folder, `$APPDIR`) and is on `PATH`. Without it on `PATH` NixOS is
 /// probably set up to run AppImages directly (`programs.appimage.binfmt`).
-fn launcher() -> Option<&'static str> {
+pub fn launcher() -> Option<&'static str> {
     const APPIMAGE_RUN: &str = "appimage-run";
     let appdir = PathBuf::from(std::env::var_os("APPDIR")?);
     let unpacked_by_it = appdir.components().any(|c| c.as_os_str() == APPIMAGE_RUN);

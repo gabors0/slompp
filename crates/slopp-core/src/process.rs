@@ -52,6 +52,22 @@ pub fn spawn_detached(mut cmd: Command, log: &Path) -> anyhow::Result<Child> {
         .with_context(|| format!("opening {}", log.display()))?;
     let err = out.try_clone()?;
     cmd.stdin(Stdio::null()).stdout(out).stderr(err);
+    spawn_apart(cmd)
+}
+
+/// Starts a program that outlives the panel and has nothing to say to it
+/// (a new SLOPP, an installer), apart from it like [`spawn_detached`]'s
+/// servers.
+pub fn launch(mut cmd: Command) -> anyhow::Result<Child> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    spawn_apart(cmd)
+}
+
+/// Spawns `cmd` in a process group of its own, with the signals and, on
+/// Windows, the job object it would otherwise inherit from the panel.
+fn spawn_apart(mut cmd: Command) -> anyhow::Result<Child> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;

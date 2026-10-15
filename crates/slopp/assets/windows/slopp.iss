@@ -67,8 +67,17 @@ Name: "{autodesktop}\SLOPP"; Filename: "{app}\slopp.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\slopp.exe"; Description: "{cm:LaunchProgram,SLOPP}"; Flags: nowait postinstall skipifsilent
+; SLOPP's own updater runs this silently with /RELAUNCH=1 as it quits, and
+; this starts the new version (as the user, not elevated).
+Filename: "{app}\slopp.exe"; Flags: nowait runasoriginaluser; Check: Relaunch
 
 ; The servers outlive the panel by design; without it nothing would stop
 ; them.
 [UninstallRun]
 Filename: "{app}\sloppctl.exe"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopServers"
+
+[Code]
+function Relaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
