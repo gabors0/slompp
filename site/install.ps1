@@ -151,7 +151,7 @@ function Invoke-SloppInstaller {
             return
         }
         $list = Join-Names $missing
-        if (-not (Confirm-Step "Install $list?")) {
+        if (-not (Confirm-Step "Install $($list)?")) {
             Note "skipping the servers; SLOPP's Install button gets them later"
             return
         }
@@ -172,8 +172,8 @@ function Invoke-SloppInstaller {
                 $release = Invoke-RestMethod -UseBasicParsing -Headers $headers "$api/latest"
             }
         } catch {
-            if ($Version) { throw "release v$Version not found" }
-            throw 'could not reach GitHub'
+            if ($Version) { throw "release v$Version not found ($($_.Exception.Message))" }
+            throw "could not reach GitHub ($($_.Exception.Message))"
         }
         $tag = $release.tag_name
         $ver = $tag.TrimStart('v')
@@ -247,7 +247,12 @@ function Invoke-SloppInstaller {
             & $ctl stop
             if ($LASTEXITCODE -ne 0) { Warn "not every server stopped; see '$ctl status'" }
         }
-        if (Test-SloppRunning) { Note 'the uninstaller closes the running SLOPP' }
+        # The uninstaller can't remove a running panel's program.
+        if (Test-SloppRunning) {
+            Note 'closing the running SLOPP'
+            Get-Process -Name slopp -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Milliseconds 500
+        }
 
         Say 'Removing SLOPP'
         $uninstallArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
@@ -257,6 +262,9 @@ function Invoke-SloppInstaller {
         $deadline = (Get-Date).AddMinutes(2)
         while ((Get-Installed) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
         if (Get-Installed) { throw "SLOPP is still installed; remove it in Settings, Apps" }
+        if (Test-Path -LiteralPath (Join-Path $installed.Dir 'slopp.exe')) {
+            Warn "the uninstaller left files in $($installed.Dir); delete the folder"
+        }
         Say 'Removed SLOPP'
         $kept = @()
         if ($root) { $kept += "the stack in $root" }
