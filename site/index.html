@@ -214,7 +214,8 @@ p { margin: 0; }
 .intro h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.12; letter-spacing: -0.015em; max-width: 22ch; }
 .intro .lede { margin-top: 14px; font-size: 15px; line-height: 1.6; max-width: 40em; color: var(--text); }
 .intro .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
-@media (max-width: 860px) { .intro { padding-top: 20px; grid-template-columns: 1fr; } .hero-mark { width: 160px; margin: 0 auto; order: -1; } }
+/* On a phone the heading comes first; the mark follows, smaller, over the rack it drives. */
+@media (max-width: 860px) { .intro { padding-top: 20px; grid-template-columns: 1fr; } .hero-mark { width: auto; margin: 4px 0 0; } .hero-mark .switches { width: 132px; margin: 0 auto; } }
 
 /* Rack: one unit per module (views/rack.rs) */
 .rack { border: 1px solid var(--line); border-radius: 8px; background: var(--face); }
@@ -285,6 +286,45 @@ p { margin: 0; }
 .log .ok { color: var(--ok); }
 .log .detail { color: var(--text-2); }
 
+/* The demo's browser beside the log: the pages the units' Admin buttons open */
+.demo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 900px) { .demo { grid-template-columns: 1fr; } }
+.browser > header { justify-content: flex-start; gap: 2px; padding-left: 4px; }
+.browser > header .tab { height: 24px; padding: 0 10px; font-size: 12px; font-weight: 400; }
+.browser .count { margin-left: 6px; padding: 0 5px; border-radius: 8px; font: 400 11px/16px var(--mono); color: var(--on-accent); background: var(--ok); }
+.view { height: 236px; overflow-y: auto; padding: 8px 14px 14px; font-size: 13px; color: var(--text); }
+.view .url { font: 400 12px/20px var(--mono); color: var(--text-3); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view .down { margin-top: 36px; text-align: center; }
+.view .down strong { display: block; color: var(--ink); font-weight: 600; }
+.view .down span, .view .note { color: var(--text-2); font-size: 12px; }
+.view pre { margin: 0 0 12px; padding: 0; overflow: visible; font: 400 12.5px/20px var(--mono); white-space: pre-wrap; }
+.view pre .c { color: var(--text-3); }
+.view .run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.view .run .btn { height: 26px; font-size: 12px; }
+.view .result { font: 400 12px/18px var(--mono); }
+.view .result.ok { color: var(--ok); }
+.view .result.fault { color: var(--fault); }
+.view .msgs { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.view .msg {
+  display: grid; grid-template-columns: minmax(0, 9em) minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+  padding: 7px 10px; border: 0; border-top: 1px solid var(--line); background: none; text-align: left;
+  font: 400 12.5px/1.4 var(--sans); color: var(--text-2); cursor: pointer;
+}
+.view .msg:first-child { border-top: 0; }
+.view .msg:hover { background: var(--wash-1); }
+.view .msg span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view .msg .when { font: 400 11.5px/1.4 var(--mono); color: var(--text-3); }
+.view .msg.unread { color: var(--ink); font-weight: 600; }
+.view dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0 0 10px; font-size: 12px; }
+.view dt { color: var(--text-3); }
+.view dd { margin: 0; color: var(--text); }
+.view .body-text { padding-top: 10px; border-top: 1px solid var(--line); white-space: pre-wrap; }
+.view .back { height: 22px; padding: 0 8px; margin: -2px 0 8px -8px; font-size: 12px; color: var(--text-2); }
+.view table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 12.5px; }
+.view th { text-align: left; font-weight: 400; font-size: 11px; color: var(--text-3); padding: 0 0 4px; }
+.view td { padding: 5px 0; border-top: 1px solid var(--line); font-family: var(--mono); }
+.view td + td, .view th + th { text-align: right; color: var(--text-2); }
+
 /* Settings-style groups (views/settings.rs): a 220px label column */
 .page { margin-top: 20px; padding: 0 8px; }
 .group { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px 32px; padding: 24px 0; border-top: 1px solid var(--line); }
@@ -308,7 +348,10 @@ p { margin: 0; }
 }
 
 .shot { margin: 0; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; }
+.shot a { display: block; cursor: zoom-in; }
 .shot img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.shot-hint { display: none; font-size: 12px; color: var(--text-3); }
+@media (max-width: 760px) { .shot-hint { display: block; } }
 .shot .light, [data-theme="light"] .shot .dark { display: none; }
 [data-theme="light"] .shot .light { display: block; }
 
@@ -480,6 +523,7 @@ footer a { color: var(--text-2); }
           <div class="reading"><dt>PIDs</dt><dd data-pids="apache">—</dd></div>
         </dl>
         <div class="acts">
+          <button class="btn ghost" type="button" data-admin="site" title="Open the site">Admin</button>
           <a class="btn ghost" href="#folder">Config</a>
           <a class="btn ghost" href="#folder">Logs</a>
           <button class="btn primary toggle" type="button" data-toggle="apache">Start</button>
@@ -500,6 +544,7 @@ footer a { color: var(--text-2); }
           <div class="reading"><dt>PID</dt><dd data-pids="mysql">—</dd></div>
         </dl>
         <div class="acts">
+          <button class="btn ghost" type="button" data-admin="pma" title="Open phpMyAdmin">Admin</button>
           <a class="btn ghost" href="#folder">Config</a>
           <a class="btn ghost" href="#folder">Logs</a>
           <button class="btn primary toggle" type="button" data-toggle="mysql">Start</button>
@@ -521,6 +566,7 @@ footer a { color: var(--text-2); }
           <div class="reading"><dt>PID</dt><dd data-pids="mailpit">—</dd></div>
         </dl>
         <div class="acts">
+          <button class="btn ghost" type="button" data-admin="mailpit" title="Open Mailpit's inbox">Admin</button>
           <button class="btn ghost" type="button" disabled>Config</button>
           <a class="btn ghost" href="#folder">Logs</a>
           <button class="btn primary toggle" type="button" data-toggle="mailpit">Start</button>
@@ -536,10 +582,20 @@ footer a { color: var(--text-2); }
       </div>
     </div>
 
-    <section class="well" aria-label="Log">
-      <header>Log <button class="btn ghost" type="button" id="clear">Clear</button></header>
-      <div class="log" id="log" aria-live="polite"></div>
-    </section>
+    <div class="demo">
+      <section class="well" aria-label="Log">
+        <header>Log <button class="btn ghost" type="button" id="clear">Clear</button></header>
+        <div class="log" id="log" aria-live="polite"></div>
+      </section>
+      <section class="well browser" id="browser" aria-label="The stack's pages, in a browser">
+        <header role="tablist" aria-label="Page">
+          <button class="tab" type="button" role="tab" data-page="site">mail.php</button>
+          <button class="tab" type="button" role="tab" data-page="pma">phpMyAdmin</button>
+          <button class="tab" type="button" role="tab" data-page="mailpit">Mailpit<span class="count" id="unread" hidden></span></button>
+        </header>
+        <div class="view" id="view" role="tabpanel" aria-live="polite"></div>
+      </section>
+    </div>
 
     <div class="page">
       <section class="group" aria-labelledby="modules-h">
@@ -561,11 +617,11 @@ footer a { color: var(--text-2); }
         <div class="content">
           <div class="cards">
             <div class="card"><h3>Starts and stops each server</h3><p>One button per module, with its ports, PIDs and a log of what happened. Install gets a missing server with your package manager. Config errors show up with line numbers before Apache starts.</p></div>
+            <div class="card"><h3>Catches PHP's mail</h3><p><code>mail()</code> works with no setup and never reaches a real inbox: Mailpit keeps every message in the stack and shows it at <code>localhost:8025</code>. Try it in the demo above.</p></div>
             <div class="card"><h3>Leaves your config alone</h3><p>Config files are written once and never overwritten. Ports and paths go on the command line at start, so changing a port doesn't touch your edits.</p></div>
             <div class="card"><h3>Finds port conflicts</h3><p>The Ports page shows which program holds 80, 443, 3306, 1025 or 8025, so you know why a server won't start before you go looking.</p></div>
             <div class="card"><h3>Lives in the tray</h3><p>The icon's lamps show what's running: Apache, MySQL and Mailpit, top to bottom. Its menu starts and stops modules and opens the site or Mailpit's inbox.</p></div>
             <div class="card"><h3>Keeps servers running</h3><p>Close the panel and your site stays up, as with XAMPP. Settings can stop everything on quit instead.</p></div>
-            <div class="card"><h3>Follows your appearance</h3><p>Dark and light, from Ayu, set in IBM Plex. System follows the OS, or pick one in Settings, as in this page's title bar.</p></div>
           </div>
         </div>
       </section>
@@ -577,9 +633,10 @@ footer a { color: var(--text-2); }
         </div>
         <div class="content">
           <figure class="shot">
-            <img class="dark" src="panel-dark.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its dark appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start.">
-            <img class="light" src="panel-light.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its light appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start.">
+            <a class="dark" href="panel-dark.png" title="Open full size"><img src="panel-dark.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its dark appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start."></a>
+            <a class="light" href="panel-light.png" title="Open full size"><img src="panel-light.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its light appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start."></a>
           </figure>
+          <p class="shot-hint">Tap it for full size.</p>
         </div>
       </section>
 
@@ -733,6 +790,95 @@ mailpit/          <span class="c">the mail PHP sent</span></pre>
     mailpit: { name: "Mailpit", up: "Running on ports 1025 and 8025", start: 500, stop: 400, procs: 1, state: "off" },
   };
 
+  // The demo's browser: a PHP page that calls mail(), phpMyAdmin and
+  // Mailpit's inbox, each reachable only while its servers run. The inbox
+  // outlives a stop, as mailpit/mailpit.db does.
+  const view = $("#view");
+  const on = (id) => modules[id].state === "on";
+  const browser = { page: "site", inbox: [], open: null, result: null, sent: 0 };
+  const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const url = { site: "localhost:8080/mail.php", pma: "localhost:8080/phpmyadmin/", mailpit: "localhost:8025" };
+  const down = (title, hint) => `<p class="down"><strong>${title}</strong><span>${hint}</span></p>`;
+
+  function sendMail() {
+    if (!on("mailpit")) {
+      browser.result = { ok: false, text: "mail() returned false: Mailpit isn't running, so run/sendmail had nowhere to hand the message." };
+    } else {
+      browser.sent += 1;
+      browser.inbox.unshift({
+        from: "you@localhost", to: "someone@example.com",
+        subject: browser.sent > 1 ? `Hello from SLOPP (${browser.sent})` : "Hello from SLOPP",
+        body: "Sent with PHP's mail(). It never left your machine.", when: clock(), read: false,
+      });
+      browser.result = { ok: true, text: "mail() returned true. It's in Mailpit." };
+    }
+    renderView();
+  }
+
+  function renderView() {
+    const unread = browser.inbox.filter((m) => !m.read).length;
+    const badge = $("#unread");
+    badge.hidden = !unread;
+    badge.textContent = unread;
+    $$("[data-page]").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.page === browser.page)));
+    $$("[data-admin]").forEach((b) => { b.disabled = !on(b.dataset.admin === "site" ? "apache" : b.dataset.admin === "pma" ? "mysql" : "mailpit"); });
+
+    let html = `<p class="url">http://${url[browser.page]}</p>`;
+    if (browser.page === "mailpit") {
+      const open = browser.open;
+      if (!on("mailpit")) html += down("Can't reach localhost:8025", "Start Mailpit; the mail it caught is still there.");
+      else if (open) {
+        html += `<button class="btn ghost back" type="button" data-back>← Inbox</button>
+          <dl><dt>From</dt><dd>${esc(open.from)}</dd><dt>To</dt><dd>${esc(open.to)}</dd><dt>Subject</dt><dd>${esc(open.subject)}</dd><dt>Received</dt><dd>${open.when}</dd></dl>
+          <p class="body-text">${esc(open.body)}</p>`;
+      } else if (!browser.inbox.length) html += down("No mail yet", "Run mail.php and it lands here.");
+      else {
+        html += `<div class="msgs">${browser.inbox.map((m, i) =>
+          `<button class="msg${m.read ? "" : " unread"}" type="button" data-msg="${i}"><span>${esc(m.from)}</span><span>${esc(m.subject)}</span><span class="when">${m.when}</span></button>`).join("")}</div>`;
+      }
+    } else if (!on("apache")) {
+      html += down("Can't reach localhost:8080", "Start Apache.");
+    } else if (browser.page === "site") {
+      const r = browser.result;
+      html += `<pre><span class="c">&lt;?php</span>
+mail("someone@example.com", "Hello from SLOPP",
+     "Sent with PHP's mail().");</pre>
+        <div class="run"><button class="btn" type="button" data-send>Run mail.php</button>${
+          r ? `<span class="result ${r.ok ? "ok" : "fault"}">${r.text}</span>` : `<span class="note">No SMTP settings: php.ini already points at Mailpit.</span>`}</div>`;
+    } else if (!on("mysql")) {
+      html += `<p class="result fault">mysqli::real_connect(): (HY000/2002): No such file or directory</p>
+        <p class="note">phpMyAdmin can't reach MariaDB's socket. Start MySQL.</p>`;
+    } else {
+      html += `<p class="note">MariaDB 11.4.12 via UNIX socket, as root</p>
+        <table><thead><tr><th>Database</th><th>Collation</th></tr></thead><tbody>${
+          ["information_schema", "mysql", "performance_schema", "sys"].map((d) => `<tr><td>${d}</td><td>utf8mb4_general_ci</td></tr>`).join("")
+        }</tbody></table>`;
+    }
+    view.innerHTML = html;
+  }
+
+  view.addEventListener("click", (e) => {
+    const t = e.target.closest("button");
+    if (!t) return;
+    if (t.hasAttribute("data-send")) sendMail();
+    else if (t.hasAttribute("data-back")) { browser.open = null; renderView(); }
+    else if (t.dataset.msg) {
+      browser.open = browser.inbox[Number(t.dataset.msg)];
+      browser.open.read = true;
+      renderView();
+    }
+  });
+  const showPage = (page) => {
+    browser.page = page;
+    if (page !== "mailpit") browser.open = null;
+    renderView();
+  };
+  $$("[data-page]").forEach((t) => t.addEventListener("click", () => showPage(t.dataset.page)));
+  $$("[data-admin]").forEach((b) => b.addEventListener("click", () => {
+    showPage(b.dataset.admin);
+    $("#browser").scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }));
+
   function set(id, state, pids) {
     const m = modules[id];
     m.state = state;
@@ -754,6 +900,7 @@ mailpit/          <span class="c">the mail PHP sent</span></pre>
     b.classList.toggle("primary", state === "off");
     $("#start-all").disabled = Object.values(modules).every((x) => x.state !== "off");
     $("#stop-all").disabled = Object.values(modules).every((x) => x.state !== "on");
+    renderView();
   }
 
   function toggle(id) {
