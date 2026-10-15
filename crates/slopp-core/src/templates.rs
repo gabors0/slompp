@@ -265,6 +265,11 @@ pub(crate) const EXTENSIONS: &[&str] = &[
 ];
 
 fn php_ini_for(layout: &Layout, windows: bool) -> String {
+    let mail = if windows {
+        String::new()
+    } else {
+        php_mail_ini(layout)
+    };
     let error_log = conf_path(&layout.php_error_log());
     let tmp = conf_path(&layout.tmp());
     let socket = conf_path(&layout.mysql_socket());
@@ -277,7 +282,8 @@ fn php_ini_for(layout: &Layout, windows: bool) -> String {
             format!(
                 "; Extensions; add more `extension=` lines here. When Apache starts,\n\
                  ; SLOPP writes run/php/slopp.ini, which PHP reads after this file:\n\
-                 ; extension_dir (your PHP's ext folder) and mysqli's default port.\n{lines}"
+                 ; extension_dir (your PHP's ext folder), mysqli's default port, and\n\
+                 ; SMTP and smtp_port, so mail() goes to Mailpit.\n{lines}"
             ),
             String::new(),
         )
@@ -327,7 +333,7 @@ session.save_handler = files
 session.save_path = "{tmp}"
 session.use_strict_mode = 1
 session.gc_maxlifetime = 1440
-{mysql}
+{mysql}{mail}
 [opcache]
 opcache.enable = 1
 opcache.validate_timestamps = 1
@@ -336,16 +342,63 @@ opcache.revalidate_freq = 0
     )
 }
 
+/// Linux and macOS: php.ini's mail section, sending `mail()` through
+/// [`Layout::sendmail`] to Mailpit. Also added to a php.ini written before
+/// SLOPP had Mailpit ([`crate::setup::ensure_php_mail`]).
+pub fn php_mail_ini(layout: &Layout) -> String {
+    let sendmail = sh_quote(&conf_path(&layout.sendmail()));
+    format!(
+        "\n[mail function]\n\
+         ; mail() goes to Mailpit: run/sendmail, which SLOPP writes on every start,\n\
+         ; hands each message to Mailpit's SMTP port. Change this for real mail.\n\
+         sendmail_path = \"{sendmail} -t -i\"\n"
+    )
+}
+
+/// `text` as one word for `sh`, quoted only when it needs to be.
+fn sh_quote(text: &str) -> String {
+    let plain = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+@:,".contains(c));
+    if plain {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
+/// Linux and macOS: [`Layout::sendmail`], which PHP's `sendmail_path` runs:
+/// Mailpit's own `sendmail` aimed at its SMTP port, or, while there's no
+/// Mailpit, a refusal PHP logs. Rewritten on every start.
+pub fn sendmail_script(mailpit: Option<&Path>, smtp_port: u16) -> String {
+    let head = "#!/bin/sh\n# Written by SLOPP on every start: hands PHP's mail to Mailpit.\n";
+    match mailpit {
+        Some(mailpit) => format!(
+            "{head}exec {} sendmail -S 127.0.0.1:{smtp_port} \"$@\"\n",
+            sh_quote(&mailpit.to_string_lossy())
+        ),
+        None => format!(
+            "{head}echo \"SLOPP: Mailpit isn't installed, so this mail went nowhere\" >&2\n\
+             cat >/dev/null\n\
+             exit 1\n"
+        ),
+    }
+}
+
 /// Windows: `slopp.ini` in [`Layout::php_scan_dir`], so the extensions in
-/// php.ini load from the PHP that runs, and mysqli finds MariaDB on the
-/// port in Settings (what `mysqli.default_socket` does elsewhere).
-/// Rewritten on every start.
-pub fn php_scan_ini(extension_dir: &Path, mysql_port: u16) -> String {
+/// php.ini load from the PHP that runs, mysqli finds MariaDB on the port in
+/// Settings (what `mysqli.default_socket` does elsewhere), and `mail()`
+/// talks to Mailpit (what `sendmail_path` does elsewhere). Rewritten on
+/// every start.
+pub fn php_scan_ini(extension_dir: &Path, mysql_port: u16, smtp_port: u16) -> String {
     format!(
         "; Written by SLOPP on every start; edit php.ini instead.\n\
          extension_dir = \"{}\"\n\
          mysqli.default_host = \"127.0.0.1\"\n\
-         mysqli.default_port = {mysql_port}\n",
+         mysqli.default_port = {mysql_port}\n\
+         SMTP = \"127.0.0.1\"\n\
+         smtp_port = {smtp_port}\n",
         conf_path(extension_dir)
     )
 }
@@ -625,11 +678,37 @@ mod tests {
     #[test]
     fn scan_ini_names_the_extension_dir() {
         assert_eq!(
-            php_scan_ini(Path::new(r"C:\php\ext"), 3307),
+            php_scan_ini(Path::new(r"C:\php\ext"), 3307, 1025),
             "; Written by SLOPP on every start; edit php.ini instead.\n\
              extension_dir = \"C:/php/ext\"\n\
              mysqli.default_host = \"127.0.0.1\"\n\
-             mysqli.default_port = 3307\n"
+             mysqli.default_port = 3307\n\
+             SMTP = \"127.0.0.1\"\n\
+             smtp_port = 1025\n"
         );
+    }
+
+    #[test]
+    fn php_mail_goes_to_mailpit() {
+        let ini = php_ini_for(&Layout::new("/s"), false);
+        assert!(ini.contains("\n[mail function]\n"));
+        assert!(ini.contains("\nsendmail_path = \"/s/run/sendmail -t -i\"\n"));
+        assert!(!php_ini_for(&Layout::new("/s"), true).contains("sendmail_path"));
+        assert!(
+            php_mail_ini(&Layout::new("/home/me/my stack"))
+                .contains("sendmail_path = \"'/home/me/my stack/run/sendmail' -t -i\"")
+        );
+
+        assert_eq!(
+            sendmail_script(Some(Path::new("/usr/bin/mailpit")), 2525),
+            "#!/bin/sh\n# Written by SLOPP on every start: hands PHP's mail to Mailpit.\n\
+             exec /usr/bin/mailpit sendmail -S 127.0.0.1:2525 \"$@\"\n"
+        );
+        assert!(
+            sendmail_script(Some(Path::new("/it's here/mailpit")), 1025)
+                .contains("exec '/it'\\''s here/mailpit' sendmail")
+        );
+        let missing = sendmail_script(None, 1025);
+        assert!(missing.contains("exit 1\n") && missing.contains("cat >/dev/null"));
     }
 }

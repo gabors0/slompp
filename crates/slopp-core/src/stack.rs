@@ -324,6 +324,11 @@ impl Stack {
             bail!("{problem}");
         }
         setup::ensure_layout(&self.layout, self.tools.httpd.as_ref())?;
+        #[cfg(unix)]
+        if matches!(module, Module::Apache | Module::Mailpit) {
+            let mailpit = self.tools.mailpit.as_ref().map(|m| m.bin.as_path());
+            setup::write_sendmail(&self.layout, mailpit, self.settings.ports.smtp)?;
+        }
         let procs = match module {
             Module::Apache => self.start_apache()?,
             Module::MySql => self.start_mysql()?,
@@ -620,7 +625,8 @@ impl Stack {
         std::fs::create_dir_all(&scan_dir)
             .with_context(|| format!("creating {}", scan_dir.display()))?;
         let ini = scan_dir.join("slopp.ini");
-        let ini_text = templates::php_scan_ini(&php_dir.join("ext"), self.settings.ports.mysql);
+        let ports = self.settings.ports;
+        let ini_text = templates::php_scan_ini(&php_dir.join("ext"), ports.mysql, ports.smtp);
         std::fs::write(&ini, ini_text).with_context(|| format!("writing {}", ini.display()))?;
 
         let path = std::env::var_os("PATH").unwrap_or_default();

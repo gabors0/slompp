@@ -124,6 +124,12 @@ impl Layout {
         self.php().join("logs/php-fpm.log")
     }
 
+    /// Linux and macOS: what PHP's `sendmail_path` runs, which hands the
+    /// mail to Mailpit.
+    pub fn sendmail(&self) -> PathBuf {
+        self.run().join("sendmail")
+    }
+
     /// The `PHP_INI_SCAN_DIR` SLOPP adds, holding the generated `slopp.ini`:
     /// on Windows where PHP's extensions are, elsewhere the extensions PHP
     /// has but doesn't load by itself.

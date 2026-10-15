@@ -391,3 +391,24 @@ fn mailpit_catches_mail_and_keeps_it() {
     assert!(body.contains("Caught by SLOPP"), "{body}");
     fx.stop(Module::Mailpit);
 }
+
+#[cfg(unix)]
+#[test]
+#[ignore = "starts Mailpit, Apache and PHP"]
+fn php_mail_goes_to_mailpit() {
+    let _serial = locked();
+    let fx = Fixture::new();
+    let ports = fx.stack.settings().ports;
+    fx.start(Module::Mailpit);
+    fx.start(Module::Apache);
+    fx.page(
+        "mail.php",
+        "<?php var_export(mail('someone@example.com', 'Sent by PHP', 'Hello.'));",
+    );
+    let (code, body) = get(ports.http, "/mail.php");
+    assert_eq!((code, body.as_str()), (200, "true"));
+    let (_, body) = get(ports.mailpit, "/api/v1/messages");
+    assert!(body.contains("Sent by PHP"), "{body}");
+    fx.stop(Module::Apache);
+    fx.stop(Module::Mailpit);
+}
