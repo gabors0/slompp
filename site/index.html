@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SLOPP</title>
+<meta name="description" content="An XAMPP-style control panel for Apache, PHP and MariaDB, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
+<meta name="color-scheme" content="dark light">
+<meta property="og:title" content="SLOPP">
+<meta property="og:description" content="An XAMPP-style control panel for Apache, PHP and MariaDB, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://slopp.gs0.me/">
+<meta property="og:image" content="https://slopp.gs0.me/panel-dark.png">
+<meta property="og:image:width" content="2160">
+<meta property="og:image:height" content="1440">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://slopp.gs0.me/">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/IBMPlexSans-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/IBMPlexSans-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<script>
+// Appearance, as in the panel's settings: System follows the OS, Dark and
+// Light stick (per browser). Set before first paint so nothing flashes.
+(() => {
+  const system = matchMedia("(prefers-color-scheme: light)");
+  let mode = "system";
+  try { mode = localStorage.getItem("slopp-theme") || "system"; } catch (e) {}
+  const apply = () => {
+    const light = mode === "light" || (mode === "system" && system.matches);
+    document.documentElement.dataset.theme = light ? "light" : "dark";
+  };
+  apply();
+  system.addEventListener("change", apply);
+  window.sloppTheme = {
+    get: () => mode,
+    set(next) {
+      mode = next;
+      try { localStorage.setItem("slopp-theme", next); } catch (e) {}
+      apply();
+    },
+  };
+})();
+</script>
+<style>
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url(fonts/IBMPlexSans-Regular.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url(fonts/IBMPlexSans-SemiBold.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 700; font-display: swap; src: url(fonts/IBMPlexSans-Bold.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url(fonts/IBMPlexMono-Regular.woff2) format("woff2"); }
+
+/* The panel's palette (crates/slopp/src/theme.rs): Ayu Dark and Ayu Light.
+   Colour comes from the lamps; the orange marks the brand and the download. */
+:root {
+  --bg: #0D1017;
+  --face: #141821;
+  --well: #010102;
+  --line: #1B1F29;
+  --line-strong: #262B37;
+  --text: #BFBDB6;
+  --text-2: #8C9097;
+  --text-3: #5A6378;
+  --ink: #FFFFFF;
+  --accent: #FF8F40;
+  --on-accent: #0D1017;
+  --ok: #AAD94C;
+  --busy: #FFB454;
+  /* The mark (theme::MarkInk::WHITE). */
+  --unit: #FFFFFF;
+  --link: #B9B9B9;
+  --lamp-on: #149A50;
+  --lamp-busy: #F4A000;
+  --screw: #07090D;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F8F9FA;
+  --face: #FFFFFF;
+  --well: #EBEEF0;
+  --line: #E7EAED;
+  --line-strong: #D5DAE0;
+  --text: #5C6166;
+  --text-2: #6F7882;
+  --text-3: #828E9F;
+  --ink: #0D1017;
+  --accent: #FA8532;
+  --ok: #719700;
+  --busy: #B37C00;
+  /* theme::MarkInk::BLACK */
+  --unit: #000000;
+  --link: #737373;
+  --lamp-on: #1F8F58;
+  --lamp-busy: #EFAC01;
+  --screw: #DCE0E5;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 17px/1.6 var(--sans);
+  font-kerning: normal;
+}
+a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+code, pre, kbd { font-family: var(--mono); font-size: 0.88em; }
+:not(pre) > code { background: var(--well); padding: 0.1em 0.35em; border-radius: 4px; }
+h1, h2, h3 { color: var(--ink); line-height: 1.15; margin: 0; }
+p { margin: 0; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+@media (max-width: 560px) { .wrap { padding: 0 16px; } }
+
+/* Header */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 22px; padding-bottom: 22px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 19px; letter-spacing: 0.01em; }
+.brand svg { width: 26px; height: 26px; }
+.top nav { display: flex; gap: 24px; font-size: 15px; }
+.top nav a { color: var(--text-2); text-decoration: none; }
+.top nav a:hover { color: var(--ink); }
+.top .end { display: flex; align-items: center; gap: 28px; }
+.appearance { display: flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; }
+.appearance button {
+  font: 500 13px/1 var(--sans); color: var(--text-2);
+  background: none; border: 0; border-radius: 5px; padding: 6px 10px; cursor: pointer;
+}
+.appearance button:hover { color: var(--ink); }
+.appearance button[aria-pressed="true"] { background: var(--face); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
+@media (max-width: 760px) { .top nav .hide-sm { display: none; } }
+@media (max-width: 480px) {
+  .top .end { gap: 16px; }
+  .top nav .hide-xs { display: none; }
+  .appearance button { padding: 6px 8px; }
+}
+
+/* Hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 56px; align-items: center; padding-top: 56px; padding-bottom: 72px; }
+.hero h1 { font-size: clamp(40px, 6.2vw, 72px); font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; max-width: 12ch; }
+.hero .lede { margin-top: 24px; font-size: 19px; line-height: 1.55; max-width: 34em; color: var(--text); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 36px; }
+.button {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 20px; border-radius: 6px;
+  background: var(--accent); color: var(--on-accent);
+  font-weight: 600; font-size: 16px; text-decoration: none;
+}
+.button:hover { filter: brightness(1.06); }
+.button small { font-weight: 400; opacity: 0.75; font-size: 14px; }
+.quiet { color: var(--text-2); font-size: 15px; }
+.quiet a { color: var(--text-2); }
+.quiet a:hover { color: var(--ink); }
+
+
+/* The mark, as a rack you can switch on */
+.rack-mark { position: relative; width: 100%; max-width: 420px; justify-self: center; }
+.rack-mark svg { display: block; width: 100%; height: auto; }
+.rack-mark .unit { fill: var(--unit); }
+.rack-mark .link { fill: var(--link); }
+.rack-mark stop { stop-color: var(--lamp-on); stop-opacity: 0; transition: stop-color 0.25s, stop-opacity 0.35s; }
+.rack-mark stop.end { stop-opacity: 0; }
+.rack-mark[data-apache="on"] .apache stop.end,
+.rack-mark[data-mysql="on"] .mysql stop.end { stop-opacity: 1; }
+.rack-mark[data-apache="busy"] .apache stop,
+.rack-mark[data-mysql="busy"] .mysql stop { stop-color: var(--lamp-busy); }
+.rack-mark[data-apache="busy"] .apache stop.end,
+.rack-mark[data-mysql="busy"] .mysql stop.end { stop-opacity: 1; animation: blink 0.9s ease-in-out infinite; }
+@keyframes blink { 50% { stop-opacity: 0.45; } }
+.lamp-white { display: inline; }
+.lamp-black { display: none; }
+[data-theme="light"] .lamp-white { display: none; }
+[data-theme="light"] .lamp-black { display: inline; }
+.rack-mark button {
+  position: absolute; left: 8.2%; width: 83.6%; height: 21.9%;
+  border: 0; padding: 0; margin: 0; background: transparent; cursor: pointer;
+  border-radius: 8%/30%;
+}
+.rack-mark button.apache-switch { top: 8.2%; }
+.rack-mark button.mysql-switch { top: 39.45%; }
+.rack-mark button:disabled { cursor: progress; }
+.status {
+  margin-top: 18px; min-height: 1.6em; text-align: center;
+  font-family: var(--mono); font-size: 14px; color: var(--text-2);
+}
+.status.ok { color: var(--ok); }
+.hint { margin-top: 4px; text-align: center; font-size: 14px; color: var(--text-2); }
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr; gap: 40px; padding-top: 24px; }
+  .rack-mark { max-width: 300px; }
+}
+@media (max-width: 560px) {
+  .rack-mark { max-width: 240px; }
+}
+
+/* Screenshot */
+.shot { margin: 0 auto; padding-bottom: 104px; }
+.shot img {
+  display: block; width: 100%; height: auto;
+  border-radius: 10px; border: 1px solid var(--line-strong);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.55);
+}
+[data-theme="light"] .shot img { box-shadow: 0 30px 70px -36px rgba(13, 16, 23, 0.35); }
+.shot .light, [data-theme="light"] .shot .dark { display: none; }
+[data-theme="light"] .shot .light { display: block; }
+
+/* Sections */
+section.block { padding-bottom: 104px; }
+.block > header { max-width: 40em; margin-bottom: 36px; }
+.block h2 { font-size: clamp(28px, 3.4vw, 38px); font-weight: 700; letter-spacing: -0.015em; }
+.block > header p { margin-top: 14px; }
+
+/* Module rows, as rack units with ears */
+.rack { border: 1px solid var(--line); border-radius: 8px; background: var(--face); overflow: hidden; }
+.row {
+  display: grid; grid-template-columns: 20px 34px minmax(0, 11rem) minmax(0, 1fr) auto 20px;
+  align-items: center; gap: 0 16px; padding: 22px 0;
+  border-top: 1px solid var(--line);
+}
+.row:first-child { border-top: 0; }
+.row::before, .row::after {
+  content: ""; align-self: stretch; margin: -22px 0;
+  background:
+    radial-gradient(circle at 50% 30%, var(--screw) 3px, transparent 3.5px),
+    radial-gradient(circle at 50% 70%, var(--screw) 3px, transparent 3.5px);
+}
+.row::before { border-right: 1px solid var(--line); }
+.row::after { border-left: 1px solid var(--line); grid-column: 6; }
+.led { width: 26px; height: 10px; border-radius: 2px; background: var(--text-3); opacity: 0.55; transition: background 0.25s, opacity 0.25s; }
+.led[data-state="on"] { background: var(--ok); opacity: 1; }
+.led[data-state="busy"] { background: var(--busy); opacity: 1; }
+.led.none { background: transparent; border: 1px dashed var(--text-3); opacity: 0.6; }
+.row h3 { font-size: 21px; font-weight: 600; }
+.row .what { color: var(--text); }
+.row .what span { display: block; color: var(--text-2); font-size: 15px; }
+.ports { display: flex; gap: 22px; padding-right: 8px; }
+.ports div { display: flex; flex-direction: column; }
+.ports dt { font-size: 13px; color: var(--text-2); }
+.ports dd { margin: 0; font-family: var(--mono); font-size: 17px; color: var(--ink); }
+@media (max-width: 760px) {
+  .row { grid-template-columns: 12px 30px minmax(0, 1fr) 12px; row-gap: 10px; }
+  .row::before { grid-row: 1 / span 3; }
+  .row::after { grid-column: 4; grid-row: 1 / span 3; }
+  .row::before, .row::after { background: none; }
+  .row .what, .row .ports { grid-column: 3; }
+  .ports { padding-right: 0; }
+}
+
+/* Feature list */
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 48px; margin: 0; }
+.facts div { border-top: 2px solid var(--line-strong); padding-top: 18px; }
+.facts dt { color: var(--ink); font-weight: 600; font-size: 18px; }
+.facts dd { margin: 8px 0 0; }
+@media (max-width: 860px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 28px; } }
+
+/* Install */
+.platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--face); }
+.platform { padding: 28px 28px 32px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.platform:first-child { border-left: 0; }
+.platform h3 { font-size: 22px; font-weight: 600; }
+.platform .req { font-size: 14px; color: var(--text-2); margin-top: -8px; }
+.platform ol { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 10px; }
+.platform ol li::marker { color: var(--text-3); }
+.files { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: auto; padding-top: 6px; font-size: 15px; }
+pre {
+  margin: 0; padding: 12px 14px; border-radius: 6px;
+  background: var(--well); color: var(--text);
+  overflow-x: auto; line-height: 1.55; font-size: 13.5px;
+}
+pre .c { color: var(--text-3); }
+@media (max-width: 960px) {
+  .platforms { grid-template-columns: 1fr; }
+  .platform { border-left: 0; border-top: 1px solid var(--line); }
+  .platform:first-child { border-top: 0; }
+}
+
+/* Folder and terminal */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; }
+.pair h2 { font-size: clamp(24px, 2.6vw, 30px); }
+.pair p { margin: 12px 0 20px; max-width: 34em; }
+.pair pre { font-size: 14px; padding: 18px 20px; }
+@media (max-width: 860px) { .pair { grid-template-columns: 1fr; gap: 64px; } }
+
+/* Footer */
+footer { border-top: 1px solid var(--line); padding-top: 40px; padding-bottom: 56px; font-size: 15px; color: var(--text-2); }
+footer .warn { max-width: 44em; color: var(--text); margin-bottom: 20px; }
+footer .warn strong { color: var(--ink); font-weight: 600; }
+footer .small { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rack-mark stop, .led { transition: none; }
+  .rack-mark stop.end { animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 512 512" aria-hidden="true">
+        <rect class="link" x="42" y="98" width="112" height="160" fill="var(--link)"/>
+        <rect class="link" x="358" y="258" width="112" height="160" fill="var(--link)"/>
+        <rect x="42" y="42" width="428" height="112" rx="20" fill="var(--unit)"/>
+        <rect x="42" y="202" width="428" height="112" rx="20" fill="var(--unit)"/>
+        <rect x="42" y="362" width="428" height="112" rx="20" fill="var(--unit)"/>
+      </svg>
+      SLOPP
+    </a>
+    <div class="end">
+      <nav>
+        <a class="hide-xs" href="#install">Install</a>
+        <a class="hide-sm" href="#sloppctl">sloppctl</a>
+        <a href="https://github.com/gabors0/slopp">GitHub</a>
+      </nav>
+      <div class="appearance" role="group" aria-label="Appearance">
+        <button type="button" data-mode="system">System</button>
+        <button type="button" data-mode="dark">Dark</button>
+        <button type="button" data-mode="light">Light</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Apache, PHP and MariaDB, run from one panel.</h1>
+        <p class="lede">SLOPP is an XAMPP-style control panel, rewritten in Rust with a native GPUI interface, for Linux, macOS and Windows. It runs the stock servers your system already has, keeps the whole stack in one folder, and shows what's listening on which port.</p>
+        <div class="actions">
+          <a class="button" id="download" href="https://github.com/gabors0/slopp/releases/latest">Download <small id="version">0.2.2</small></a>
+          <span class="quiet"><a href="#install">Other platforms</a> or <a href="https://github.com/gabors0/slopp">read the source</a></span>
+        </div>
+      </div>
+
+      <div>
+        <div class="rack-mark" id="mark" data-apache="off" data-mysql="off">
+          <svg viewBox="0 0 512 512" role="img" aria-label="SLOPP's mark: three rack units. The top lamp is Apache, the middle one MySQL.">
+            <defs>
+              <!-- A lit lamp fades in from x=185 (tray::icon::LAMP_CLEAR); white ink is solid at the right edge, black ink from x=299. -->
+              <linearGradient id="apache-w" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+              <linearGradient id="mysql-w" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+              <linearGradient id="apache-b" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+              <linearGradient id="mysql-b" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+            </defs>
+            <rect class="link" x="42" y="98" width="112" height="160"/>
+            <rect class="link" x="358" y="258" width="112" height="160"/>
+            <rect class="unit" x="42" y="42" width="428" height="112" rx="20"/>
+            <rect class="unit" x="42" y="202" width="428" height="112" rx="20"/>
+            <rect class="unit" x="42" y="362" width="428" height="112" rx="20"/>
+            <g class="lamp-white">
+              <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#apache-w)"/>
+              <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#mysql-w)"/>
+            </g>
+            <g class="lamp-black">
+              <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#apache-b)"/>
+              <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#mysql-b)"/>
+            </g>
+          </svg>
+          <button class="apache-switch" type="button" data-module="apache" aria-label="Start Apache"></button>
+          <button class="mysql-switch" type="button" data-module="mysql" aria-label="Start MySQL"></button>
+        </div>
+        <p class="status" id="status" aria-live="polite">Apache and MySQL are stopped</p>
+        <p class="hint">Click a unit to start or stop it, as in the tray icon.</p>
+      </div>
+    </div>
+
+    <figure class="shot">
+      <img class="dark" src="panel-dark.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its dark appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, the stack folder, and a log of the start.">
+      <img class="light" src="panel-light.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its light appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, the stack folder, and a log of the start.">
+    </figure>
+
+    <section class="block" aria-labelledby="modules">
+      <header>
+        <h2 id="modules">Two modules, like XAMPP</h2>
+        <p>Apache and MySQL, the same pair XAMPP ships, without Tomcat, FTP or mail. SLOPP doesn't bundle the servers: it finds the ones you installed, on <code>PATH</code> and in the usual places, and Settings takes explicit paths. Ports default to XAMPP's 80, 443 and 3306, or 8080 and 8443 where your user can't use low ports.</p>
+      </header>
+      <div class="rack">
+        <div class="row">
+          <span class="led" data-led="apache"></span>
+          <h3>Apache</h3>
+          <p class="what">Apache httpd, with PHP <span>through PHP-FPM, or mod_php where PHP has an Apache module</span></p>
+          <dl class="ports"><div><dt>HTTP</dt><dd>80</dd></div><div><dt>HTTPS</dt><dd>443</dd></div></dl>
+        </div>
+        <div class="row">
+          <span class="led" data-led="mysql"></span>
+          <h3>MySQL</h3>
+          <p class="what">MariaDB <span>with a database created on its first start</span></p>
+          <dl class="ports"><div><dt>MySQL</dt><dd>3306</dd></div></dl>
+        </div>
+        <div class="row">
+          <span class="led none" aria-hidden="true"></span>
+          <h3>Admin</h3>
+          <p class="what">phpMyAdmin or Adminer <span>downloaded when you ask for it, served by Apache</span></p>
+          <dl class="ports"><div><dt>Path</dt><dd>/phpmyadmin/</dd></div></dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="panel">
+      <header>
+        <h2 id="panel">What the panel does</h2>
+      </header>
+      <dl class="facts">
+        <div>
+          <dt>Starts and stops each server</dt>
+          <dd>One button per module, with its ports, PIDs and a log of what happened. Config errors show up with line numbers before Apache starts.</dd>
+        </div>
+        <div>
+          <dt>Leaves your config alone</dt>
+          <dd>Config files are written once and never overwritten. Ports and paths go on the command line at start, so changing a port doesn't touch your edits.</dd>
+        </div>
+        <div>
+          <dt>Finds port conflicts</dt>
+          <dd>The Ports page shows which program holds 80, 443 and 3306, so you know why a server won't start before you go looking.</dd>
+        </div>
+        <div>
+          <dt>Lives in the tray</dt>
+          <dd>The icon's lamps show what's running: the top one is Apache, the middle one MySQL. Its menu starts and stops modules and opens the site.</dd>
+        </div>
+        <div>
+          <dt>Keeps servers running</dt>
+          <dd>Close the panel and your site stays up, as with XAMPP. Settings can stop everything on quit instead.</dd>
+        </div>
+        <div>
+          <dt>Written in Rust</dt>
+          <dd>One native program, drawn on the GPU by GPUI, the UI framework behind the Zed editor. No Electron and no web view.</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="block" id="install" aria-labelledby="install-h">
+      <header>
+        <h2 id="install-h">Install</h2>
+        <p>Install the servers first, then SLOPP. The builds aren't signed, so your system may warn the first time you open one.</p>
+      </header>
+      <div class="platforms">
+        <div class="platform">
+          <h3>Linux</h3>
+          <p class="req">x86_64, glibc 2.39 or newer</p>
+          <ol>
+            <li>Install Apache, PHP-FPM and MariaDB with your package manager. On Debian and Ubuntu:
+              <pre>sudo apt install apache2 php-fpm \
+  php-mysql mariadb-server</pre></li>
+            <li>Make the AppImage executable and run it. It adds itself to your applications.</li>
+          </ol>
+          <p>On NixOS, the flake brings the servers too:</p>
+          <pre>nix run github:gabors0/slopp</pre>
+          <p class="files"><a data-asset="linux-x86_64.AppImage" href="https://github.com/gabors0/slopp/releases/latest">AppImage</a> <a data-asset="linux-x86_64.tar.gz" href="https://github.com/gabors0/slopp/releases/latest">Tarball</a></p>
+        </div>
+        <div class="platform">
+          <h3>macOS</h3>
+          <p class="req">Apple silicon</p>
+          <ol>
+            <li>Install PHP and MariaDB with Homebrew. Apache comes with macOS; Homebrew's <code>httpd</code> gets a newer one that runs PHP as mod_php.
+              <pre>brew install php mariadb</pre></li>
+            <li>Open the disk image and drag SLOPP to Applications.</li>
+            <li>The app isn't notarized: allow it in System Settings, Privacy &amp; Security, or run
+              <pre>xattr -dr com.apple.quarantine \
+  /Applications/SLOPP.app</pre></li>
+          </ol>
+          <p class="files"><a data-asset="macos-arm64.dmg" href="https://github.com/gabors0/slopp/releases/latest">Disk image</a></p>
+        </div>
+        <div class="platform">
+          <h3>Windows</h3>
+          <p class="req">x86_64, Windows 10 or newer. New, so expect rough edges.</p>
+          <ol>
+            <li>Run the setup. It installs for your user, without admin rights.</li>
+            <li>Click Install on a module whose servers are missing. SLOPP gets them with winget: Apache Lounge's Apache, PHP's Thread Safe build and MariaDB.</li>
+            <li>If SmartScreen warns, choose More info, then Run anyway.</li>
+          </ol>
+          <p>An existing XAMPP's Apache, PHP and MariaDB work too.</p>
+          <p class="files"><a data-asset="windows-x86_64-setup.exe" href="https://github.com/gabors0/slopp/releases/latest">Setup</a> <a data-asset="windows-x86_64.zip" href="https://github.com/gabors0/slopp/releases/latest">Portable zip</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block pair">
+      <div>
+        <h2>Everything in one folder</h2>
+        <p>Laid out like XAMPP's, in <code>~/.local/share/slopp</code> (<code>%LOCALAPPDATA%\slopp</code> on Windows). Put your sites in <code>htdocs</code>.</p>
+<pre>htdocs/           <span class="c">your sites</span>
+apache/conf/      <span class="c">httpd.conf and extras</span>
+apache/logs/      <span class="c">error.log, access.log</span>
+php/php.ini
+mysql/my.cnf
+mysql/data/       <span class="c">the databases</span>
+phpMyAdmin/       <span class="c">once you get it</span>
+adminer/          <span class="c">once you get it</span></pre>
+      </div>
+      <div id="sloppctl">
+        <h2>Or from a terminal</h2>
+        <p><code>sloppctl</code> is the counterpart of XAMPP's <code>lampp</code> script, and works on the same stack as the panel.</p>
+<pre>sloppctl start [apache|mysql]
+sloppctl stop [apache|mysql]
+sloppctl restart [apache|mysql]
+sloppctl status
+sloppctl ports      <span class="c">who listens where</span>
+sloppctl paths      <span class="c">the stack and programs</span>
+sloppctl install-phpmyadmin
+sloppctl install-adminer</pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="warn"><strong>For your own machine only.</strong> Like XAMPP, MariaDB's root user has no password, and phpMyAdmin and Adminer log in as root. The servers listen on localhost; don't expose the stack to a network.</p>
+    <div class="small">
+      <span>SLOPP is free software under the <a href="https://github.com/gabors0/slopp/blob/main/LICENSE">GPL 3.0 or later</a>.</span>
+      <span>Apache httpd, PHP, MariaDB, phpMyAdmin and Adminer are separate programs with their own licenses.</span>
+      <span>Built with <a href="https://gpui-kit.com">gpui-kit</a>. Colours from <a href="https://github.com/ayu-theme/ayu-colors">Ayu</a>. Set in IBM Plex.</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const REPO = "gabors0/slopp";
+  const mark = document.getElementById("mark");
+  const status = document.getElementById("status");
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // The demo rack: each unit starts like the panel's modules do, amber
+  // while starting or stopping, green once its ports are open.
+  const modules = {
+    apache: { name: "Apache", up: "running on ports 8080 and 8443", start: 900, stop: 600 },
+    mysql: { name: "MySQL", up: "running on port 3306", start: 1700, stop: 900 },
+  };
+
+  function set(id, state) {
+    mark.dataset[id] = state;
+    document.querySelector(`[data-led="${id}"]`).dataset.state = state;
+    const button = mark.querySelector(`[data-module="${id}"]`);
+    button.disabled = state === "busy";
+    button.setAttribute("aria-label", `${state === "on" ? "Stop" : "Start"} ${modules[id].name}`);
+  }
+
+  function say(text, ok) {
+    status.textContent = text;
+    status.classList.toggle("ok", !!ok);
+  }
+
+  function toggle(id) {
+    const m = modules[id];
+    const starting = mark.dataset[id] !== "on";
+    if (mark.dataset[id] === "busy") return;
+    if (still) {
+      set(id, starting ? "on" : "off");
+      say(starting ? `${m.name} ${m.up}` : `${m.name} stopped`, starting);
+      return;
+    }
+    set(id, "busy");
+    say(starting ? `Starting ${m.name}…` : `Stopping ${m.name}…`);
+    setTimeout(() => {
+      set(id, starting ? "on" : "off");
+      say(starting ? `${m.name} ${m.up}` : `${m.name} stopped`, starting);
+    }, starting ? m.start : m.stop);
+  }
+
+  mark.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => toggle(b.dataset.module)));
+
+  const switches = document.querySelectorAll(".appearance button");
+  const showMode = () => switches.forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === sloppTheme.get())));
+  switches.forEach((b) => b.addEventListener("click", () => {
+    sloppTheme.set(b.dataset.mode);
+    showMode();
+  }));
+  showMode();
+
+  // Autostart, as with {"autostart": ["apache", "mysql"]}.
+  setTimeout(() => toggle("apache"), still ? 0 : 500);
+  setTimeout(() => toggle("mysql"), still ? 0 : 800);
+
+  // The download button and links point at the latest release's files.
+  const ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+  const platform = /mac/i.test(ua) ? ["macOS", "macos-arm64.dmg"]
+    : /win/i.test(ua) ? ["Windows", "windows-x86_64-setup.exe"]
+    : /linux|x11/i.test(ua) && !/android/i.test(navigator.userAgent) ? ["Linux", "linux-x86_64.AppImage"]
+    : null;
+
+  fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((release) => {
+      const url = (suffix) => (release.assets.find((a) => a.name.endsWith(suffix)) || {}).browser_download_url;
+      document.getElementById("version").textContent = release.tag_name.replace(/^v/, "");
+      document.querySelectorAll("[data-asset]").forEach((a) => {
+        const u = url(a.dataset.asset);
+        if (u) a.href = u;
+      });
+      const button = document.getElementById("download");
+      const u = platform && url(platform[1]);
+      if (u) {
+        button.href = u;
+        button.firstChild.textContent = `Download for ${platform[0]} `;
+      }
+    })
+    .catch(() => {});
+})();
+</script>
+</body>
+</html>
