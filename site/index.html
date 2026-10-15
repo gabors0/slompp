@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SLOPP</title>
-<meta name="description" content="An XAMPP-style control panel for Apache, PHP and MariaDB, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
+<meta name="description" content="An XAMPP-style control panel for Apache, PHP, MariaDB and Mailpit, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
 <meta name="color-scheme" content="dark light">
 <meta property="og:title" content="SLOPP">
-<meta property="og:description" content="An XAMPP-style control panel for Apache, PHP and MariaDB, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
+<meta property="og:description" content="An XAMPP-style control panel for Apache, PHP, MariaDB and Mailpit, rewritten in Rust with GPUI, for Linux, macOS and Windows.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://slopp.gs0.me/">
 <meta property="og:image" content="https://slopp.gs0.me/panel-dark.png">
@@ -177,6 +177,7 @@ p { margin: 0; }
 .btn:disabled { color: var(--text-3); cursor: default; background: var(--face); }
 .btn.ghost { border-color: transparent; background: none; color: var(--text); }
 .btn.ghost:hover { background: var(--wash-1); }
+.btn.ghost:disabled { color: var(--text-3); background: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.primary:active { filter: brightness(0.9); }
@@ -207,6 +208,7 @@ p { margin: 0; }
 }
 .hero-mark button.apache-switch { top: 0; }
 .hero-mark button.mysql-switch { top: 37%; }
+.hero-mark button.mailpit-switch { top: 74.1%; }
 .hero-mark button:disabled { cursor: progress; }
 .hero-mark .hint { margin-top: 14px; text-align: center; font-size: 12px; color: var(--text-3); }
 .intro h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.12; letter-spacing: -0.015em; max-width: 22ch; }
@@ -277,7 +279,7 @@ p { margin: 0; }
 .log { height: 236px; overflow-y: auto; }
 .log .line { display: flex; gap: 12px; white-space: nowrap; }
 .log .t { color: var(--text-3); }
-.log .m { width: 52px; flex: none; color: var(--text-2); }
+.log .m { width: 62px; flex: none; color: var(--text-2); }
 .log .ok { color: var(--ok); }
 .log .detail { color: var(--text-2); }
 
@@ -349,9 +351,9 @@ footer a { color: var(--text-2); }
 .mark .unit-r { fill: var(--unit); }
 .mark .link-r { fill: var(--link); }
 .mark stop { stop-color: var(--lamp-on); stop-opacity: 0; transition: stop-color 0.25s, stop-opacity 0.35s; }
-.mark[data-apache="on"] .apache stop.end, .mark[data-mysql="on"] .mysql stop.end { stop-opacity: 1; }
-.mark[data-apache="busy"] .apache stop, .mark[data-mysql="busy"] .mysql stop { stop-color: var(--lamp-busy); }
-.mark[data-apache="busy"] .apache stop.end, .mark[data-mysql="busy"] .mysql stop.end { stop-opacity: 1; animation: blink 1.1s ease-in-out infinite alternate; }
+.mark[data-apache="on"] .apache stop.end, .mark[data-mysql="on"] .mysql stop.end, .mark[data-mailpit="on"] .mailpit stop.end { stop-opacity: 1; }
+.mark[data-apache="busy"] .apache stop, .mark[data-mysql="busy"] .mysql stop, .mark[data-mailpit="busy"] .mailpit stop { stop-color: var(--lamp-busy); }
+.mark[data-apache="busy"] .apache stop.end, .mark[data-mysql="busy"] .mysql stop.end, .mark[data-mailpit="busy"] .mailpit stop.end { stop-opacity: 1; animation: blink 1.1s ease-in-out infinite alternate; }
 @keyframes blink { to { stop-opacity: 0.3; } }
 .lamp-black { display: none; }
 [data-theme="light"] .lamp-white { display: none; }
@@ -363,13 +365,15 @@ footer a { color: var(--text-2); }
 <div class="window">
   <header class="titlebar" id="titlebar">
     <a class="brand" href="#top" aria-label="SLOPP, back to the top">
-      <svg class="mark" id="mark" data-apache="off" data-mysql="off" viewBox="42 42 428 432" aria-hidden="true">
+      <svg class="mark" id="mark" data-apache="off" data-mysql="off" data-mailpit="off" viewBox="42 42 428 432" aria-hidden="true">
         <defs>
           <!-- A lit lamp fades in from x=185 (tray::icon::LAMP_CLEAR); white ink is solid at the right edge, black ink from x=299. -->
           <linearGradient id="apache-w" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
           <linearGradient id="mysql-w" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+          <linearGradient id="mailpit-w" class="mailpit" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
           <linearGradient id="apache-b" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
           <linearGradient id="mysql-b" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+          <linearGradient id="mailpit-b" class="mailpit" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
         </defs>
         <rect class="link-r" x="42" y="98" width="112" height="160"/>
         <rect class="link-r" x="358" y="258" width="112" height="160"/>
@@ -379,10 +383,12 @@ footer a { color: var(--text-2); }
         <g class="lamp-white">
           <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#apache-w)"/>
           <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#mysql-w)"/>
+          <rect x="185" y="362" width="285" height="112" rx="20" fill="url(#mailpit-w)"/>
         </g>
         <g class="lamp-black">
           <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#apache-b)"/>
           <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#mysql-b)"/>
+          <rect x="185" y="362" width="285" height="112" rx="20" fill="url(#mailpit-b)"/>
         </g>
       </svg>
       SLOPP
@@ -407,22 +413,24 @@ footer a { color: var(--text-2); }
     <div class="intro">
       <div>
         <h1>Apache, PHP and MariaDB, run from one panel.</h1>
-        <p class="lede">SLOPP is an XAMPP-style control panel, rewritten in Rust with a native GPUI interface, for Linux, macOS and Windows. It runs the stock servers your system already has, keeps the whole stack in one folder, and shows what's listening on which port.</p>
+        <p class="lede">SLOPP is an XAMPP-style control panel, rewritten in Rust with a native GPUI interface, for Linux, macOS and Windows. It runs the stock servers your system already has, catches the mail your PHP sends in Mailpit, keeps the whole stack in one folder, and shows what's listening on which port.</p>
         <div class="actions">
-          <a class="btn primary lg" id="download" href="https://github.com/gabors0/slopp/releases/latest"><span>Download</span> <span class="sub" id="version">0.2.2</span></a>
+          <a class="btn primary lg" id="download" href="https://github.com/gabors0/slopp/releases/latest"><span>Download</span> <span class="sub" id="version">0.2.3</span></a>
           <a class="btn lg" href="#install">All platforms</a>
           <a class="btn ghost lg" href="https://github.com/gabors0/slopp">Source</a>
         </div>
       </div>
       <div class="hero-mark">
         <div class="switches">
-          <svg class="mark" id="hero-mark-svg" data-apache="off" data-mysql="off" viewBox="42 42 428 432" role="img" aria-label="SLOPP's mark: three rack units. The top lamp is Apache, the middle one MySQL.">
+          <svg class="mark" id="hero-mark-svg" data-apache="off" data-mysql="off" data-mailpit="off" viewBox="42 42 428 432" role="img" aria-label="SLOPP's mark: three rack units, whose lamps are Apache, MySQL and Mailpit, top to bottom.">
             <defs>
               <!-- A lit lamp fades in from x=185 (tray::icon::LAMP_CLEAR); white ink is solid at the right edge, black ink from x=299. -->
               <linearGradient id="hero-apache-w" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
               <linearGradient id="hero-mysql-w" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+              <linearGradient id="hero-mailpit-w" class="mailpit" gradientUnits="userSpaceOnUse" x1="185" x2="470" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
               <linearGradient id="hero-apache-b" class="apache" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
               <linearGradient id="hero-mysql-b" class="mysql" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
+              <linearGradient id="hero-mailpit-b" class="mailpit" gradientUnits="userSpaceOnUse" x1="185" x2="299" y1="0" y2="0"><stop offset="0"/><stop class="end" offset="1"/></linearGradient>
             </defs>
             <rect class="link-r" x="42" y="98" width="112" height="160"/>
             <rect class="link-r" x="358" y="258" width="112" height="160"/>
@@ -432,14 +440,17 @@ footer a { color: var(--text-2); }
             <g class="lamp-white">
               <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#hero-apache-w)"/>
               <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#hero-mysql-w)"/>
+              <rect x="185" y="362" width="285" height="112" rx="20" fill="url(#hero-mailpit-w)"/>
             </g>
             <g class="lamp-black">
               <rect x="185" y="42" width="285" height="112" rx="20" fill="url(#hero-apache-b)"/>
               <rect x="185" y="202" width="285" height="112" rx="20" fill="url(#hero-mysql-b)"/>
+              <rect x="185" y="362" width="285" height="112" rx="20" fill="url(#hero-mailpit-b)"/>
             </g>
           </svg>
           <button class="apache-switch" type="button" data-toggle="apache" aria-label="Start Apache"></button>
           <button class="mysql-switch" type="button" data-toggle="mysql" aria-label="Start MySQL"></button>
+          <button class="mailpit-switch" type="button" data-toggle="mailpit" aria-label="Start Mailpit"></button>
         </div>
         <p class="hint">Click a unit to start or stop it.</p>
       </div>
@@ -487,6 +498,27 @@ footer a { color: var(--text-2); }
           <button class="btn primary toggle" type="button" data-toggle="mysql">Start</button>
         </div>
       </div>
+      <div class="unit" data-module="mailpit">
+        <div class="who">
+          <span class="bezel"><span class="led" data-led="mailpit"></span></span>
+          <div>
+            <div class="name"><h3>Mailpit</h3><span class="state" data-state-of="mailpit">Stopped</span></div>
+            <div class="detail">Mailpit 1.31 · catches PHP's mail</div>
+          </div>
+        </div>
+        <dl class="readings ports">
+          <div class="reading"><dt>SMTP</dt><dd data-live="mailpit">1025</dd></div>
+          <div class="reading"><dt>Web</dt><dd data-live="mailpit">8025</dd></div>
+        </dl>
+        <dl class="readings pids">
+          <div class="reading"><dt>PID</dt><dd data-pids="mailpit">—</dd></div>
+        </dl>
+        <div class="acts">
+          <button class="btn ghost" type="button" disabled>Config</button>
+          <a class="btn ghost" href="#folder">Logs</a>
+          <button class="btn primary toggle" type="button" data-toggle="mailpit">Start</button>
+        </div>
+      </div>
     </div>
 
     <div class="stackline">
@@ -505,12 +537,12 @@ footer a { color: var(--text-2); }
     <div class="page">
       <section class="group" aria-labelledby="modules-h">
         <div class="label">
-          <h2 id="modules-h">Two modules, like XAMPP</h2>
-          <p class="desc">Apache and MySQL, without Tomcat, FTP or mail.</p>
+          <h2 id="modules-h">Three modules, like XAMPP</h2>
+          <p class="desc">Apache, MySQL and Mailpit for mail, without Tomcat or FTP.</p>
         </div>
         <div class="content">
-          <p>SLOPP doesn't bundle the servers: it finds the ones you installed, on <code>PATH</code> and in the usual places, and Settings takes explicit paths. Apache runs PHP through PHP-FPM, or mod_php where PHP has an Apache module. MariaDB gets a database on its first start, and phpMyAdmin or Adminer is downloaded when you ask for it, served at <code>/phpmyadmin/</code> or <code>/adminer/</code>.</p>
-          <p class="muted">Ports default to XAMPP's 80, 443 and 3306, or 8080 and 8443 where your user can't use low ports.</p>
+          <p>SLOPP doesn't bundle the servers: it finds the ones you installed, on <code>PATH</code> and in the usual places, and Settings takes explicit paths. Apache runs PHP through PHP-FPM, or mod_php where PHP has an Apache module. MariaDB gets a database on its first start, and phpMyAdmin or Adminer is downloaded when you ask for it, served at <code>/phpmyadmin/</code> or <code>/adminer/</code>. PHP's <code>mail()</code> goes to Mailpit, which keeps every message in the stack and shows it in its own web page, so nothing leaves your machine.</p>
+          <p class="muted">Ports default to XAMPP's 80, 443 and 3306, or 8080 and 8443 where your user can't use low ports, and Mailpit's own 1025 for SMTP and 8025 for its page.</p>
         </div>
       </section>
 
@@ -521,10 +553,10 @@ footer a { color: var(--text-2); }
         </div>
         <div class="content">
           <div class="cards">
-            <div class="card"><h3>Starts and stops each server</h3><p>One button per module, with its ports, PIDs and a log of what happened. Config errors show up with line numbers before Apache starts.</p></div>
+            <div class="card"><h3>Starts and stops each server</h3><p>One button per module, with its ports, PIDs and a log of what happened. Install gets a missing server with your package manager. Config errors show up with line numbers before Apache starts.</p></div>
             <div class="card"><h3>Leaves your config alone</h3><p>Config files are written once and never overwritten. Ports and paths go on the command line at start, so changing a port doesn't touch your edits.</p></div>
             <div class="card"><h3>Finds port conflicts</h3><p>The Ports page shows which program holds 80, 443 and 3306, so you know why a server won't start before you go looking.</p></div>
-            <div class="card"><h3>Lives in the tray</h3><p>The icon's lamps show what's running: the top one is Apache, the middle one MySQL. Its menu starts and stops modules and opens the site.</p></div>
+            <div class="card"><h3>Lives in the tray</h3><p>The icon's lamps show what's running: Apache, MySQL and Mailpit, top to bottom. Its menu starts and stops modules and opens the site or Mailpit's inbox.</p></div>
             <div class="card"><h3>Keeps servers running</h3><p>Close the panel and your site stays up, as with XAMPP. Settings can stop everything on quit instead.</p></div>
             <div class="card"><h3>Follows your appearance</h3><p>Dark and light, from Ayu, set in IBM Plex. System follows the OS, or pick one in Settings, as in this page's title bar.</p></div>
           </div>
@@ -534,12 +566,12 @@ footer a { color: var(--text-2); }
       <section class="group" aria-labelledby="shot-h">
         <div class="label">
           <h2 id="shot-h">The real window</h2>
-          <p class="desc">Apache on 8080 and 8443 with PHP-FPM, MariaDB on 3306, after an autostart.</p>
+          <p class="desc">Apache on 8080 and 8443 with PHP-FPM, MariaDB on 3306 and Mailpit on 1025 and 8025, after an autostart.</p>
         </div>
         <div class="content">
           <figure class="shot">
-            <img class="dark" src="panel-dark.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its dark appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, the stack folder, and a log of the start.">
-            <img class="light" src="panel-light.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its light appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, the stack folder, and a log of the start.">
+            <img class="dark" src="panel-dark.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its dark appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start.">
+            <img class="light" src="panel-light.png" width="2160" height="1440" loading="lazy" alt="The SLOPP window in its light appearance: Apache running on ports 8080 and 8443 with PHP 8.4 through PHP-FPM, MySQL running MariaDB on port 3306, Mailpit on ports 1025 and 8025, the stack folder, and a log of the start.">
           </figure>
         </div>
       </section>
@@ -562,7 +594,7 @@ footer a { color: var(--text-2); }
                 <code id="cmd-linux">curl -fsSL https://slopp.gs0.me/install.sh | sh</code>
                 <button class="btn copy" type="button" data-copy="cmd-linux">Copy</button>
               </div>
-              <p class="muted">Installs Apache, PHP and MariaDB with apt, dnf, pacman or zypper, then the AppImage to <code>~/.local/bin</code>. On NixOS, use <code>nix run github:gabors0/slopp</code> instead.</p>
+              <p class="muted">Installs Apache, PHP and MariaDB with apt, dnf, pacman or zypper, then the AppImage to <code>~/.local/bin</code>. Mailpit isn't packaged by the distributions: its Install button in SLOPP downloads it. On NixOS, use <code>nix run github:gabors0/slopp</code> instead.</p>
               <div class="files">
                 <a class="btn" data-asset="linux-x86_64.AppImage" href="https://github.com/gabors0/slopp/releases/latest">AppImage</a>
                 <a class="btn" data-asset="linux-x86_64.tar.gz" href="https://github.com/gabors0/slopp/releases/latest">Tarball</a>
@@ -574,14 +606,14 @@ footer a { color: var(--text-2); }
                 <code id="cmd-macos">curl -fsSL https://slopp.gs0.me/install.sh | sh</code>
                 <button class="btn copy" type="button" data-copy="cmd-macos">Copy</button>
               </div>
-              <p class="muted">Installs PHP and MariaDB with Homebrew, then puts <code>SLOPP.app</code> in Applications and clears the quarantine flag.</p>
+              <p class="muted">Installs PHP and MariaDB with Homebrew, then puts <code>SLOPP.app</code> in Applications and clears the quarantine flag. SLOPP's Install button gets Mailpit with Homebrew too.</p>
               <div class="files">
                 <a class="btn" data-asset="macos-arm64.dmg" href="https://github.com/gabors0/slopp/releases/latest">Disk image</a>
               </div>
             </div>
             <div class="tab-panel" data-panel="windows">
               <p class="req">x86_64, Windows 10 or newer. New, so expect rough edges.</p>
-              <p>Run the setup. Then click Install on a module whose servers are missing: SLOPP gets Apache, PHP and MariaDB with winget. An existing XAMPP's work too.</p>
+              <p>Run the setup. Then click Install on a module whose servers are missing: SLOPP gets Apache, PHP, MariaDB and Mailpit with winget. An existing XAMPP's work too.</p>
               <div class="files">
                 <a class="btn primary" data-asset="windows-x86_64-setup.exe" href="https://github.com/gabors0/slopp/releases/latest">Download setup</a>
                 <a class="btn" data-asset="windows-x86_64.zip" href="https://github.com/gabors0/slopp/releases/latest">Portable zip</a>
@@ -607,18 +639,20 @@ php/php.ini
 mysql/my.cnf
 mysql/data/       <span class="c">the databases</span>
 phpMyAdmin/       <span class="c">once you get it</span>
-adminer/          <span class="c">once you get it</span></pre>
+adminer/          <span class="c">once you get it</span>
+mailpit/          <span class="c">the mail PHP sent</span></pre>
           </div>
           <div class="well" id="sloppctl">
             <header>sloppctl <span class="c">XAMPP's lampp, on the same stack</span></header>
-<pre><span class="p">$ </span>sloppctl start [apache|mysql]
-<span class="p">$ </span>sloppctl stop [apache|mysql]
-<span class="p">$ </span>sloppctl restart [apache|mysql]
+<pre><span class="p">$ </span>sloppctl start [apache|mysql|mailpit]
+<span class="p">$ </span>sloppctl stop [apache|mysql|mailpit]
+<span class="p">$ </span>sloppctl restart [apache|mysql|mailpit]
 <span class="p">$ </span>sloppctl status
 <span class="p">$ </span>sloppctl ports      <span class="c">who listens where</span>
 <span class="p">$ </span>sloppctl paths      <span class="c">the stack and programs</span>
 <span class="p">$ </span>sloppctl install-phpmyadmin
-<span class="p">$ </span>sloppctl install-adminer</pre>
+<span class="p">$ </span>sloppctl install-adminer
+<span class="p">$ </span>sloppctl install-servers  <span class="c">what's missing</span></pre>
           </div>
         </div>
       </section>
@@ -639,7 +673,7 @@ adminer/          <span class="c">once you get it</span></pre>
   </main>
 
   <footer>
-    <span>Free software under the <a href="https://github.com/gabors0/slopp/blob/main/LICENSE">GPL 3.0 or later</a>. Apache httpd, PHP, MariaDB, phpMyAdmin and Adminer have their own licenses.</span>
+    <span>Free software under the <a href="https://github.com/gabors0/slopp/blob/main/LICENSE">GPL 3.0 or later</a>. Apache httpd, PHP, MariaDB, Mailpit, phpMyAdmin and Adminer have their own licenses.</span>
     <span>Built with <a href="https://gpui-kit.com">gpui-kit</a>. Colours from <a href="https://github.com/ayu-theme/ayu-colors">Ayu</a>. Set in IBM Plex.</span>
   </footer>
 </div>
@@ -689,6 +723,7 @@ adminer/          <span class="c">once you get it</span></pre>
   const modules = {
     apache: { name: "Apache", up: "Running on ports 8080 and 8443", start: 900, stop: 600, procs: 2, state: "off" },
     mysql: { name: "MySQL", up: "Running on port 3306", start: 1700, stop: 900, procs: 1, state: "off" },
+    mailpit: { name: "Mailpit", up: "Running on ports 1025 and 8025", start: 500, stop: 400, procs: 1, state: "off" },
   };
 
   function set(id, state, pids) {
@@ -742,14 +777,17 @@ adminer/          <span class="c">once you get it</span></pre>
   });
   set("apache", "off");
   set("mysql", "off");
+  set("mailpit", "off");
 
-  say("Panel", "SLOPP 0.2.2");
+  say("Panel", "SLOPP 0.2.3");
   say("Panel", "Stack root: ~/.local/share/slopp");
   say("Apache", "Apache 2.4.69 · PHP 8.4.26 (FPM)", "detail");
   say("MySQL", "MariaDB 11.4.12", "detail");
-  // Autostart, as with {"autostart": ["apache", "mysql"]}.
+  say("Mailpit", "Mailpit 1.31.6", "detail");
+  // Autostart, as with {"autostart": ["apache", "mysql", "mailpit"]}.
   setTimeout(() => { say("Apache", "Autostart"); toggle("apache"); }, still ? 0 : 600);
   setTimeout(() => { say("MySQL", "Autostart"); toggle("mysql"); }, still ? 0 : 900);
+  setTimeout(() => { say("Mailpit", "Autostart"); toggle("mailpit"); }, still ? 0 : 1200);
 
   // Appearance, as in the panel's settings.
   const switches = $$(".segmented button");
