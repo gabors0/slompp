@@ -682,7 +682,11 @@ footer a { color: var(--text-2); }
             </div>
             <div class="tab-panel" data-panel="windows">
               <p class="req">x86_64, Windows 10 or newer. New, so expect rough edges.</p>
-              <p>Run the setup. Then click Install on a module whose servers are missing: SLOPP gets Apache, PHP, MariaDB and Mailpit with winget. An existing XAMPP's work too.</p>
+              <div class="well cmd">
+                <code id="cmd-windows">irm https://slopp.gs0.me/install.ps1 | iex</code>
+                <button class="btn copy" type="button" data-copy="cmd-windows">Copy</button>
+              </div>
+              <p class="muted">In PowerShell. Runs the setup for your user, then installs the missing servers (Apache, PHP, MariaDB and Mailpit) with winget. Or run the setup yourself and click Install on a module whose servers are missing. An existing XAMPP's work too.</p>
               <div class="files">
                 <a class="btn primary" data-asset="windows-x86_64-setup.exe" href="https://github.com/gabors0/slopp/releases/latest">Download setup</a>
                 <a class="btn" data-asset="windows-x86_64.zip" href="https://github.com/gabors0/slopp/releases/latest">Portable zip</a>
