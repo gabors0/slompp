@@ -40,7 +40,7 @@ KDE Plasma and most panels; GNOME needs the AppIndicator extension), on macOS
 in the menu bar, on Windows in the notification area (Windows 11 first puts
 new icons behind the ^ arrow; drag it onto the taskbar to keep it in view).
 Its lamps are Apache, MySQL and Mailpit, top to bottom. The menu starts and stops
-modules and opens the site, phpMyAdmin or Adminer; on Linux and Windows a
+modules and opens the site, phpMyAdmin or Adminer, and Mailpit; on Linux and Windows a
 left click shows the panel (the menu is on the right button on Windows).
 
 With a tray, closing the window keeps SLOPP running there (Settings →
