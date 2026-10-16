@@ -16,8 +16,7 @@ const VERSION_URL: &str = "https://www.phpmyadmin.net/home_page/version.txt";
 /// have no "latest" to ask for.
 /// Update all three together.
 pub const THEME: &str = "darkwolf";
-const THEME_URL: &str =
-    "https://files.phpmyadmin.net/themes/darkwolf/5.2/darkwolf-5.2.zip";
+const THEME_URL: &str = "https://files.phpmyadmin.net/themes/darkwolf/5.2/darkwolf-5.2.zip";
 const THEME_SHA256: &str = "4f1d394d042492caa703b267078d4e8c13eb3d128d5c758d451ac69fce7eb8a8";
 
 pub fn installed(layout: &Layout) -> bool {
