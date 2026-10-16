@@ -2,14 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "site",
   "ignoreCommand": "git diff --quiet HEAD^ HEAD -- site/ vercel.json .vercelignore",
-  "redirects": [
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "slopp.vercel.app" }],
-      "destination": "https://slopp.gs0.me/$1",
-      "permanent": true
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",
