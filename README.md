@@ -225,7 +225,7 @@ afterwards), and a `php.ini` that doesn't mention `sendmail_path` at all
 (on Windows `sendmail_from`) gets the mail section that sends to Mailpit
 (comment the line out to keep it out).
 
-phpMyAdmin gets the dark BooDark theme (orange, like the panel) as its
+phpMyAdmin gets the dark Darkwolf theme as its
 default; its home page still offers the stock themes. Adminer gets a design
 in the panel's colours that follows the system's light or dark mode; delete
 `adminer/adminer.css` for Adminer's own look. "Update" in MySQL's Admin menu

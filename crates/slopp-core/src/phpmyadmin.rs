@@ -1,6 +1,6 @@
 //! phpMyAdmin, which XAMPP bundles. SLOPP downloads the current release from
 //! phpmyadmin.net on request and configures it for the stack's MariaDB,
-//! with the dark BooDark theme, in orange, as its default.
+//! with the dark Darkwolf theme as its default.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -12,20 +12,19 @@ use crate::{Layout, templates};
 
 const VERSION_URL: &str = "https://www.phpmyadmin.net/home_page/version.txt";
 
-/// BooDark, a dark Bootstrap theme for phpMyAdmin 5.2, in the orange that
-/// matches the panel's accent. (BooDark 1.2.0's own orange scheme is the cyan
-/// one relabelled.) Pinned and checked: themes have no "latest" to ask for.
+/// Darkwolf, a dark theme for phpMyAdmin 5.2. Pinned and checked: themes
+/// have no "latest" to ask for.
 /// Update all three together.
-pub const THEME: &str = "boodark-orange";
+pub const THEME: &str = "darkwolf";
 const THEME_URL: &str =
-    "https://files.phpmyadmin.net/themes/boodark-orange/1.1.0/boodark-orange-1.1.0.zip";
-const THEME_SHA256: &str = "11311ee95925bce089808bc3905db83412b1951ee99243f5b07986547788082e";
+    "https://files.phpmyadmin.net/themes/darkwolf/5.2/darkwolf-5.2.zip";
+const THEME_SHA256: &str = "4f1d394d042492caa703b267078d4e8c13eb3d128d5c758d451ac69fce7eb8a8";
 
 pub fn installed(layout: &Layout) -> bool {
     layout.phpmyadmin().join("index.php").is_file()
 }
 
-/// Downloads and unpacks the latest phpMyAdmin and BooDark into `phpMyAdmin/`
+/// Downloads and unpacks the latest phpMyAdmin and Darkwolf into `phpMyAdmin/`
 /// and writes its config. Blocking; run it off the UI thread.
 pub fn install(
     layout: &Layout,
@@ -102,8 +101,12 @@ fn install_theme(zip_path: &Path, dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Makes the theme the default in a config written before SLOPP
-/// installed it. `None` when the config already names a default.
+/// installed it, or that names the BooDark theme SLOPP used to install.
+/// `None` when the config already names another default.
 fn with_theme_default(config: &str) -> Option<String> {
+    if config.contains("'boodark-orange'") {
+        return Some(config.replace("'boodark-orange'", &format!("'{THEME}'")));
+    }
     if config.contains("ThemeDefault") {
         return None;
     }
@@ -225,14 +228,18 @@ mod tests {
         let new = with_theme_default("<?php\n$cfg['x'] = 1;\n").unwrap();
         assert_eq!(
             new,
-            "<?php\n$cfg['x'] = 1;\n\n$cfg['ThemeDefault'] = 'boodark-orange';\n"
+            "<?php\n$cfg['x'] = 1;\n\n$cfg['ThemeDefault'] = 'darkwolf';\n"
         );
         assert_eq!(with_theme_default(&new), None);
+        assert_eq!(
+            with_theme_default("$cfg['ThemeDefault'] = 'boodark-orange';").as_deref(),
+            Some("$cfg['ThemeDefault'] = 'darkwolf';")
+        );
 
         let closed = with_theme_default("<?php\n$cfg['x'] = 1;\n?>\n").unwrap();
         assert_eq!(
             closed,
-            "<?php\n$cfg['x'] = 1;\n$cfg['ThemeDefault'] = 'boodark-orange';\n?>\n"
+            "<?php\n$cfg['x'] = 1;\n$cfg['ThemeDefault'] = 'darkwolf';\n?>\n"
         );
 
         let template = templates::phpmyadmin_config(&Layout::new("/s"), "x", 3306);
