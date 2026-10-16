@@ -3,7 +3,7 @@
 
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, Window, actions};
 
-use crate::panel::{Quit, ShowModules, ShowPorts, ShowSettings};
+use crate::panel::{Quit, ShowModules, ShowPorts, ShowSettings, ToggleCompact};
 
 actions!(slopp, [Hide, HideOthers, ShowAll, Minimize, CloseWindow]);
 
@@ -34,6 +34,8 @@ pub fn init(cx: &mut App) {
             MenuItem::action("Modules", ShowModules),
             MenuItem::action("Ports", ShowPorts),
             MenuItem::action("Settings", ShowSettings),
+            MenuItem::separator(),
+            MenuItem::action("Compact Window", ToggleCompact),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

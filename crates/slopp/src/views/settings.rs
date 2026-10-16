@@ -271,6 +271,8 @@ impl SettingsView {
             stop_on_exit: self.stop_on_exit,
             close_to_tray: self.close_to_tray,
             appearance: self.appearance,
+            // Toggled from the title bar, not this form.
+            compact: Controller::global(cx).read(cx).settings().compact,
             check_updates: self.check_updates,
         })
     }

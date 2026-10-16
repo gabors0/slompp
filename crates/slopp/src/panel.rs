@@ -23,11 +23,12 @@ actions!(
         StopAll,
         ShowModules,
         ShowPorts,
-        ShowSettings
+        ShowSettings,
+        ToggleCompact
     ]
 );
 
-const CONTEXT: &str = "Panel";
+pub const CONTEXT: &str = "Panel";
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -37,6 +38,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-2", ShowPorts, Some(CONTEXT)),
         KeyBinding::new("secondary-3", ShowSettings, Some(CONTEXT)),
         KeyBinding::new("secondary-,", ShowSettings, Some(CONTEXT)),
+        KeyBinding::new("secondary-shift-m", ToggleCompact, Some(CONTEXT)),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
@@ -51,6 +53,8 @@ pub enum Page {
 pub struct Panel {
     pub controller: Entity<Controller>,
     pub page: Page,
+    /// The small window with just the rack; always on the Modules page.
+    pub compact: bool,
     pub log_scroll: ScrollHandle,
     /// The log revision the console last scrolled down to.
     scrolled_revision: usize,
@@ -62,9 +66,10 @@ pub struct Panel {
 }
 
 impl Panel {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(page: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let controller = Controller::global(cx);
         let stack = controller.read(cx).stack().clone();
+        let compact = stack.settings().compact;
         let settings_view = cx.new(|cx| SettingsView::new(&stack, window, cx));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
@@ -88,22 +93,20 @@ impl Panel {
                 apply_theme(window, cx);
                 cx.notify();
             }),
-            // A closed window no longer needs the Ports page's polling.
+            // A closed window no longer needs the Ports page's polling
+            // (unless its successor in the other style is on that page).
             cx.on_release(|this, cx| {
-                this.controller
-                    .update(cx, |controller, _| controller.watch_ports = false);
+                if this.page == Page::Ports {
+                    this.controller
+                        .update(cx, |controller, _| controller.watch_ports = false);
+                }
             }),
         ];
-
-        let page = match std::env::var("SLOPP_PAGE").as_deref() {
-            Ok("ports") => Page::Ports,
-            Ok("settings") => Page::Settings,
-            _ => Page::Modules,
-        };
 
         let mut this = Self {
             controller,
             page: Page::Modules,
+            compact,
             log_scroll: ScrollHandle::new(),
             scrolled_revision: usize::MAX,
             settings_view,
@@ -111,7 +114,7 @@ impl Panel {
             focus,
             _subscriptions: subscriptions,
         };
-        this.show(page, cx);
+        this.show(if compact { Page::Modules } else { page }, cx);
         // Once the window is up: an update found while it was closed.
         cx.defer_in(window, |this, window, cx| this.announce_update(window, cx));
         this
@@ -173,6 +176,12 @@ impl Panel {
     }
 
     pub fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        // The compact window has only the modules: the others need the full
+        // one.
+        if self.compact && page != Page::Modules {
+            self.set_compact(false, page, cx);
+            return;
+        }
         self.page = page;
         let watch = page == Page::Ports;
         self.controller.update(cx, |controller, cx| {
@@ -182,6 +191,18 @@ impl Panel {
             }
         });
         cx.notify();
+    }
+
+    /// Saves the window style and swaps this window for one in it, on
+    /// `page`.
+    pub fn set_compact(&mut self, compact: bool, page: Page, cx: &mut Context<Self>) {
+        let result = self
+            .controller
+            .update(cx, |controller, cx| controller.set_compact(compact, cx));
+        if result.is_ok() {
+            // Not from inside this window's update, which closes it.
+            cx.defer(move |cx| crate::reopen_panel(page, cx));
+        }
     }
 
     fn on_settings_event(
@@ -284,6 +305,21 @@ impl Render for Panel {
         }
         let this = &*self;
         let body = match this.page {
+            Page::Modules if this.compact => v_flex()
+                .flex_1()
+                .min_h_0()
+                .p_3()
+                .gap_3()
+                .child(
+                    div()
+                        .id("compact-rack")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(rack::render_compact(ctl, cx)),
+                )
+                .child(rack::render_compact_bar(ctl, cx))
+                .into_any_element(),
             Page::Modules => v_flex()
                 .flex_1()
                 .min_h_0()
@@ -310,20 +346,25 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &ShowModules, _, cx| this.show(Page::Modules, cx)))
             .on_action(cx.listener(|this, _: &ShowPorts, _, cx| this.show(Page::Ports, cx)))
             .on_action(cx.listener(|this, _: &ShowSettings, _, cx| this.show(Page::Settings, cx)))
+            .on_action(cx.listener(|this, _: &ToggleCompact, _, cx| {
+                this.set_compact(!this.compact, Page::Modules, cx)
+            }))
             .size_full()
             .bg(Palette::bg())
             .text_color(Palette::text())
             .font_family(theme::FONT)
             .child(
-                TitleBar::new().child(
-                    h_flex()
-                        .w_full()
-                        .h_full()
-                        .pr_2()
-                        .justify_between()
-                        .child(brand::render_nav(this, ctl, cx))
-                        .child(brand::render_global_actions(ctl, cx)),
-                ),
+                TitleBar::new().child(h_flex().w_full().h_full().pr_2().justify_between().map(
+                    |bar| {
+                        if this.compact {
+                            bar.child(brand::render_compact_title(ctl))
+                                .child(brand::render_style_toggle(true, cx))
+                        } else {
+                            bar.child(brand::render_nav(this, ctl, cx))
+                                .child(brand::render_global_actions(ctl, cx))
+                        }
+                    },
+                )),
             )
             .child(body)
     }
