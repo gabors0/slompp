@@ -1187,6 +1187,26 @@ impl Controller {
         self.changed(cx);
         Ok(())
     }
+
+    /// Saves the window style, quietly: it isn't one of the form's settings.
+    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) -> Result<(), String> {
+        let mut settings = self.stack.settings().clone();
+        settings.compact = compact;
+        if let Err(err) = settings.save(&self.settings_path) {
+            let text = format!("Saving settings failed: {err:#}");
+            self.log.push(None, Kind::Error, text.clone());
+            // The compact window has no log to read it in.
+            cx.emit(ControllerEvent::Notify {
+                text: text.clone(),
+                error: true,
+            });
+            cx.notify();
+            return Err(text);
+        }
+        self.stack = Arc::new(self.stack.reconfigure(settings));
+        cx.notify();
+        Ok(())
+    }
 }
 
 fn progress_text(progress: &Progress) -> String {

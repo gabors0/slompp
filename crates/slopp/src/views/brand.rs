@@ -1,6 +1,7 @@
 //! The title bar: SLOPP's mark, the page tabs and the whole-stack actions.
 
-use gpui_kit::component::button::Button;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -9,7 +10,7 @@ use gpui_kit::{
 use slopp_core::Module;
 
 use crate::controller::Controller;
-use crate::panel::{Page, Panel, on_controller};
+use crate::panel::{self, Page, Panel, ToggleCompact, on_controller};
 use crate::theme::{Lamp, Palette};
 
 /// SLOPP's mark, as in the tray: three rack units joined into an S by a
@@ -107,6 +108,19 @@ fn title() -> Div {
         )
 }
 
+/// The mark with the lamps of the modules, and the app's name.
+fn brand(ctl: &Controller) -> Div {
+    h_flex()
+        .gap_2()
+        .child(mark(Module::ALL.map(|m| ctl.row(m).lamp())))
+        .child(title())
+}
+
+/// The compact window's title: no tabs, since it has only the modules.
+pub fn render_compact_title(ctl: &Controller) -> impl IntoElement {
+    brand(ctl)
+}
+
 pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
     let tab = |id: &'static str, label: &'static str, page: Page, cx: &Context<Panel>| {
         let active = panel.page == page;
@@ -131,20 +145,12 @@ pub fn render_nav(panel: &Panel, ctl: &Controller, cx: &Context<Panel>) -> impl 
             .on_click(cx.listener(move |this, _, _, cx| this.show(page, cx)))
             .child(label)
     };
-    h_flex()
-        .gap_5()
-        .child(
-            h_flex()
-                .gap_2()
-                .child(mark(Module::ALL.map(|m| ctl.row(m).lamp())))
-                .child(title()),
-        )
-        .child(
-            controls(h_flex().gap_1())
-                .child(tab("tab-modules", "Modules", Page::Modules, cx))
-                .child(tab("tab-ports", "Ports", Page::Ports, cx))
-                .child(tab("tab-settings", "Settings", Page::Settings, cx)),
-        )
+    h_flex().gap_5().child(brand(ctl)).child(
+        controls(h_flex().gap_1())
+            .child(tab("tab-modules", "Modules", Page::Modules, cx))
+            .child(tab("tab-ports", "Ports", Page::Ports, cx))
+            .child(tab("tab-settings", "Settings", Page::Settings, cx)),
+    )
 }
 
 pub fn render_global_actions(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
@@ -166,4 +172,24 @@ pub fn render_global_actions(ctl: &Controller, cx: &Context<Panel>) -> impl Into
                 .disabled(busy || !ctl.any_running())
                 .on_click(on_controller(cx, |c, cx| c.stop_all(cx))),
         )
+        .child(render_style_toggle(false, cx))
+}
+
+/// Switches between the full window and the compact one.
+pub fn render_style_toggle(compact: bool, cx: &Context<Panel>) -> impl IntoElement {
+    let (icon, tooltip) = if compact {
+        (IconName::Maximize2, "Full window")
+    } else {
+        (IconName::Minimize2, "Compact window")
+    };
+    controls(div()).child(
+        Button::new("window-style")
+            .icon(icon)
+            .small()
+            .ghost()
+            .tooltip_with_action(tooltip, &ToggleCompact, Some(panel::CONTEXT))
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.set_compact(!compact, Page::Modules, cx)),
+            ),
+    )
 }

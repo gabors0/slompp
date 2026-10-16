@@ -1,6 +1,6 @@
 //! User settings: ports, where the stack root is, binary overrides, the
 //! editor and terminal to open things with, which modules start with the
-//! panel, the panel's appearance and whether it looks for updates. Saved as JSON in the config directory.
+//! panel, the panel's appearance and window style, and whether it looks for updates. Saved as JSON in the config directory.
 
 use std::path::{Path, PathBuf};
 
@@ -124,6 +124,8 @@ pub struct Settings {
     /// Keep running in the system tray when the window closes.
     pub close_to_tray: bool,
     pub appearance: Appearance,
+    /// Show the panel as a small window with just the modules.
+    pub compact: bool,
     /// Look for a new SLOPP release on GitHub when the panel opens, and
     /// daily while it runs.
     pub check_updates: bool,
@@ -141,6 +143,7 @@ impl Default for Settings {
             stop_on_exit: false,
             close_to_tray: true,
             appearance: Appearance::System,
+            compact: false,
             check_updates: true,
         }
     }
@@ -204,6 +207,7 @@ mod tests {
         settings.ports.mysql = 3307;
         settings.autostart = vec![Module::MySql];
         settings.appearance = Appearance::Light;
+        settings.compact = true;
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), settings);
 
@@ -214,6 +218,7 @@ mod tests {
         assert_eq!(partial.ports.smtp, 1025);
         assert!(partial.close_to_tray, "missing fields take the defaults");
         assert_eq!(partial.appearance, Appearance::System);
+        assert!(!partial.compact);
         assert!(partial.check_updates);
 
         std::fs::write(&path, r#"{"appearance":"dark"}"#).unwrap();

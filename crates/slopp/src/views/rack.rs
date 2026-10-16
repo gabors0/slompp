@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, TITLE_BAR_HEIGHT, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, Context, FontWeight, Hsla, SharedString, div, px,
+    Animation, AnimationExt as _, AnyElement, Context, FontWeight, Hsla, Pixels, SharedString, div,
+    px,
 };
 use slopp_core::{DbAdmin, Module, Problem};
 
@@ -17,6 +18,13 @@ use crate::panel::{Panel, on_controller};
 use crate::theme::{self, Lamp, Palette};
 
 const UNIT_HEIGHT: f32 = 76.;
+const COMPACT_UNIT_HEIGHT: f32 = 52.;
+/// The compact window's content: the title bar, then (with the padding
+/// and gap around them) the rack with its border and the bar under it.
+pub fn compact_height() -> Pixels {
+    TITLE_BAR_HEIGHT
+        + px(12. + (Module::ALL.len() as f32 * COMPACT_UNIT_HEIGHT + 2.) + 12. + 24. + 12.)
+}
 /// The LED's bezel, and the gap from it to the module's name.
 const BEZEL_WIDTH: f32 = 18.;
 const BEZEL_GAP: f32 = 14.;
@@ -220,58 +228,8 @@ fn render_actions(
     cx: &Context<Panel>,
 ) -> impl IntoElement {
     let m = row.module;
-    let running = row.running();
     let stack = ctl.stack();
     let id = m.id();
-
-    let toggle = Button::new(SharedString::from(format!("toggle-{id}")))
-        .w(px(76.))
-        .small()
-        .label(if running { "Stop" } else { "Start" })
-        .loading(row.busy())
-        .disabled(row.busy() || (missing && !running))
-        .on_click(on_controller(cx, move |c, cx| c.toggle(m, cx)));
-    let toggle = if running {
-        toggle.outline()
-    } else {
-        toggle.primary()
-    };
-    // Instead of Start while the package manager can install what's missing.
-    let install = (missing && !running && !stack.installable(m).is_empty()).then(|| {
-        let getting = ctl.getting.as_ref().map(|(module, _)| *module);
-        Button::new(SharedString::from(format!("install-{id}")))
-            .w(px(76.))
-            .small()
-            .primary()
-            .label("Install")
-            .tooltip(format!(
-                "Install the missing servers {}",
-                slopp_core::install::via(&stack.installable(m))
-            ))
-            .loading(getting == Some(m))
-            .disabled(getting.is_some())
-            .on_click(on_controller(cx, move |c, cx| c.install_servers(m, cx)))
-    });
-
-    let admin: AnyElement = match m {
-        Module::Apache => Button::new(SharedString::from(format!("admin-{id}")))
-            .small()
-            .ghost()
-            .label("Admin")
-            .tooltip("Open the site in your browser")
-            .disabled(!running)
-            .on_click(on_controller(cx, |c, cx| c.open_site(cx)))
-            .into_any_element(),
-        Module::MySql => db_admin_menu(ctl, running).into_any_element(),
-        Module::Mailpit => Button::new(SharedString::from(format!("admin-{id}")))
-            .small()
-            .ghost()
-            .label("Admin")
-            .tooltip("Open Mailpit's inbox in your browser")
-            .disabled(!running)
-            .on_click(on_controller(cx, |c, cx| c.open_mailpit(cx)))
-            .into_any_element(),
-    };
 
     // Disabled rather than left out when there's nothing (Mailpit has no
     // config files), so the units' buttons stay in line.
@@ -299,14 +257,74 @@ fn render_actions(
 
     h_flex()
         .gap_1()
-        .child(admin)
+        .child(admin(ctl, row, cx))
         .child(files_menu("config", stack.config_files(m)))
         .child(files_menu("logs", stack.log_files(m)))
         .child(div().w_2())
-        .child(match install {
-            Some(install) => install.into_any_element(),
-            None => toggle.into_any_element(),
-        })
+        .child(toggle(ctl, row, missing, cx))
+}
+
+/// Start or Stop, or Install while the package manager can install what's
+/// missing.
+fn toggle(ctl: &Controller, row: &Row, missing: bool, cx: &Context<Panel>) -> AnyElement {
+    let m = row.module;
+    let running = row.running();
+    let stack = ctl.stack();
+    let id = m.id();
+
+    if missing && !running && !stack.installable(m).is_empty() {
+        let getting = ctl.getting.as_ref().map(|(module, _)| *module);
+        return Button::new(SharedString::from(format!("install-{id}")))
+            .w(px(76.))
+            .small()
+            .primary()
+            .label("Install")
+            .tooltip(format!(
+                "Install the missing servers {}",
+                slopp_core::install::via(&stack.installable(m))
+            ))
+            .loading(getting == Some(m))
+            .disabled(getting.is_some())
+            .on_click(on_controller(cx, move |c, cx| c.install_servers(m, cx)))
+            .into_any_element();
+    }
+    let toggle = Button::new(SharedString::from(format!("toggle-{id}")))
+        .w(px(76.))
+        .small()
+        .label(if running { "Stop" } else { "Start" })
+        .loading(row.busy())
+        .disabled(row.busy() || (missing && !running))
+        .on_click(on_controller(cx, move |c, cx| c.toggle(m, cx)));
+    if running {
+        toggle.outline().into_any_element()
+    } else {
+        toggle.primary().into_any_element()
+    }
+}
+
+/// The module's Admin: the site, the database tools' menu or the inbox.
+fn admin(ctl: &Controller, row: &Row, cx: &Context<Panel>) -> AnyElement {
+    let running = row.running();
+    let id = row.module.id();
+    match row.module {
+        Module::Apache => Button::new(SharedString::from(format!("admin-{id}")))
+            .small()
+            .ghost()
+            .label("Admin")
+            .tooltip("Open the site in your browser")
+            .disabled(!running)
+            .on_click(on_controller(cx, |c, cx| c.open_site(cx)))
+            .into_any_element(),
+        Module::MySql => db_admin_menu(ctl, running).into_any_element(),
+        Module::Mailpit => Button::new(SharedString::from(format!("admin-{id}")))
+            .small()
+            .ghost()
+            .label("Admin")
+            .tooltip("Open Mailpit's inbox in your browser")
+            .disabled(!running)
+            .on_click(on_controller(cx, |c, cx| c.open_mailpit(cx)))
+            .into_any_element(),
+    }
 }
 
 /// MySQL's Admin menu: open phpMyAdmin or Adminer, download or update them.
@@ -353,6 +371,157 @@ fn db_admin_menu(ctl: &Controller, mysql_running: bool) -> impl IntoElement {
             }
             menu
         })
+}
+
+/// The compact window's rack: per module its LED, name, state and ports,
+/// Admin and Start/Stop; config and logs are in the full window.
+pub fn render_compact(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let mut rack = v_flex()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(Palette::border())
+        .bg(Palette::face())
+        .overflow_hidden();
+    for (i, row) in ctl.rows.iter().enumerate() {
+        rack = rack.child(render_compact_unit(ctl, row, i == 0, cx));
+    }
+    rack
+}
+
+fn render_compact_unit(
+    ctl: &Controller,
+    row: &Row,
+    first: bool,
+    cx: &Context<Panel>,
+) -> AnyElement {
+    let m = row.module;
+    let missing = row
+        .problems
+        .iter()
+        .any(|p| matches!(p, Problem::Missing { .. }));
+    let ports = ctl
+        .stack()
+        .ports(m)
+        .into_iter()
+        .map(|(port, _)| port.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let name = v_flex()
+        .flex_1()
+        .min_w_0()
+        .child(
+            div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(m.name()),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .text_color(Palette::text_secondary())
+                        .whitespace_nowrap()
+                        .child(row.state_label()),
+                )
+                .child(
+                    div()
+                        .font_family(theme::MONO)
+                        .text_color(if row.running() {
+                            Palette::text_secondary()
+                        } else {
+                            Palette::text_tertiary()
+                        })
+                        .truncate()
+                        .child(ports),
+                ),
+        );
+    let face = h_flex()
+        .h(px(COMPACT_UNIT_HEIGHT))
+        .pl_3()
+        .pr_2()
+        .gap(px(BEZEL_GAP - 2.))
+        .child(led(m, row.lamp()))
+        .child(name)
+        .child(
+            h_flex()
+                .flex_none()
+                .gap_1()
+                .child(admin(ctl, row, cx))
+                .child(toggle(ctl, row, missing, cx)),
+        );
+
+    let notes = notes(ctl, row);
+    v_flex()
+        .when(!first, |this| {
+            this.border_t_1().border_color(Palette::border())
+        })
+        .child(face)
+        .when(!notes.is_empty(), |this| {
+            this.child(
+                v_flex()
+                    // Under the module's name.
+                    .pl(px(12. + BEZEL_WIDTH + BEZEL_GAP - 2.))
+                    .pr_3()
+                    .pb_2()
+                    .mt(px(-6.))
+                    .gap_0p5()
+                    .children(notes.into_iter().map(|(text, tone)| {
+                        div()
+                            .text_size(px(12.))
+                            .text_color(tone)
+                            .child(SharedString::from(text))
+                    })),
+            )
+        })
+        .into_any_element()
+}
+
+/// Under the compact rack: the folder and shell buttons, and the
+/// whole-stack actions like a dialog's.
+pub fn render_compact_bar(ctl: &Controller, cx: &Context<Panel>) -> impl IntoElement {
+    let htdocs = ctl.stack().layout().htdocs();
+    let busy = ctl.rows.iter().any(|r| r.busy());
+    h_flex()
+        .flex_none()
+        .gap_1()
+        .child(
+            Button::new("open-htdocs")
+                .xsmall()
+                .ghost()
+                .label("htdocs")
+                .tooltip("Open the web root, where your projects go")
+                .on_click(on_controller(cx, move |c, cx| {
+                    c.open_folder(htdocs.clone(), cx)
+                })),
+        )
+        .child(
+            Button::new("open-shell")
+                .xsmall()
+                .ghost()
+                .label("Shell")
+                .tooltip("Open a terminal with mariadb, php, httpd and mailpit on PATH")
+                .on_click(on_controller(cx, |c, cx| c.open_shell(cx))),
+        )
+        .child(div().flex_1())
+        .child(
+            Button::new("start-all")
+                .label("Start all")
+                .small()
+                .outline()
+                .disabled(busy || ctl.all_running())
+                .on_click(on_controller(cx, |c, cx| c.start_all(cx))),
+        )
+        .child(
+            Button::new("stop-all")
+                .label("Stop all")
+                .small()
+                .outline()
+                .disabled(busy || !ctl.any_running())
+                .on_click(on_controller(cx, |c, cx| c.stop_all(cx))),
+        )
 }
 
 /// Lines under a unit: why it can't start, and an install's or a download's
